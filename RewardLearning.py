@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 from argparse import ArgumentParser
 import random
+import pdb
 
 
 class RewardLearning():
@@ -534,7 +535,7 @@ if __name__ == '__main__':
                     type=float,
                     help="The discount factor used in reward learning")
     args = parser.parse_args()
-    
+    pdb.set_trace()
     print('param:',args)       
     rewardLearning = RewardLearning(args.folds, args.seed, args.action_space, args.metric)
     rewardLearning.load_reward_rollouts()

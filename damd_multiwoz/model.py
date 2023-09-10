@@ -18,7 +18,7 @@ import re
 from sklearn.metrics import precision_recall_fscore_support
 import pandas as pd
 import nvidia_smi
-
+import pdb
 class Model(object):
     def __init__(self):
         self.reader = MultiWozReader()
@@ -527,7 +527,7 @@ def main():
     parser.add_argument('-mode')
     parser.add_argument('-cfg', nargs='*')
     args = parser.parse_args()
-
+    pdb.set_trace()
     cfg.mode = args.mode
     if args.mode == 'test' or args.mode=='adjust':
         parse_arg_cfg(args)

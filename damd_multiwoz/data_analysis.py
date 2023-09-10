@@ -1,7 +1,7 @@
 import os, json, copy, re, zipfile
 from collections import OrderedDict
 from ontology import all_domains
-
+import pdb
 
 data_path = 'data/multi-woz/'
 save_path = 'data/multi-woz-analysis/'
@@ -144,4 +144,5 @@ def analysis():
 
 
 if __name__ == '__main__':
+    pdb.set_trace()
     analysis()

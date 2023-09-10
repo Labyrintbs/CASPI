@@ -6,7 +6,7 @@ from tqdm import tqdm
 from config import global_config as cfg
 from db_ops import MultiWozDB
 from clean_dataset import clean_slot_values, clean_text
-
+import pdb
 
 def get_db_values(value_set_path):
     processed = {}
@@ -481,6 +481,7 @@ if __name__=='__main__':
             'taxi': 'db/taxi_db.json',
             'train': 'db/train_db.json',
         }
+    pdb.set_trace()
     get_db_values('db/value_set.json')
     preprocess_db(db_paths)
     dh = DataPreprocessor()
