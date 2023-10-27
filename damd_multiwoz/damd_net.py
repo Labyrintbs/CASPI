@@ -1147,13 +1147,13 @@ class DAMD(nn.Module):
             hidden_states['dspn'] = dspn_enc
             hidden_states, probs = train_decode('dspn', usdx_enc_last_h, hidden_states, probs)
 
-        if cfg.enable_bspn:
+        if cfg.enable_bspn: # true
             bspn_enc, _ = self.span_encoder(inputs['pv_'+cfg.bspn_mode])
             hidden_states[cfg.bspn_mode] = bspn_enc
-            init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h
+            init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h #cfg.bspn_mode='bsdx'
             hidden_states, probs = train_decode(cfg.bspn_mode, init_hidden, hidden_states, probs)
 
-        if cfg.enable_aspn:
+        if cfg.enable_aspn: # true
             aspn_enc, _ = self.span_encoder(inputs['pv_aspn'])
             hidden_states['aspn'] = aspn_enc
             hidden_states, probs = train_decode('aspn', usdx_enc_last_h, hidden_states, probs)

@@ -28,18 +28,29 @@ def get_db_values(value_set_path):
                 bspn_word.append(s_p)
                 processed[domain][s_p] = []
 
+    '''
+    #bspn_word
+    ['[police]', '[taxi]', '[restaurant]', 'name', 'area', 'pricerange', 'food', '[attraction]', 'name', 'area', 'type', '[hotel]', 'name', 'internet', '
+area', 'parking', 'stars', 'type', 'pricerange', '[hospital]', 'department', '[train]', 'departure', 'day', 'arrive', 'destination', 'leave']  
+    # processed
+    {'police': {}, 'taxi': {}, 'restaurant': {'name': [], 'area': [], 'pricerange': [], 'food': []}, 'attraction': {'name': [], 'area': [], 'type': []}, 
+'hotel': {'name': [], 'internet': [], 'area': [], 'parking': [], 'stars': [], 'type': [], 'pricerange': []}, 'hospital': {'department': []}, 'train':
+ {'departure': [], 'day': [], 'arrive': [], 'destination': [], 'leave': []}}
+    '''
+
+    # add values to processed's domain-slot and bspn_word
     for domain, slots in value_set.items():
         for slot, values in slots.items():
-            s_p = ontology.normlize_slot_names.get(slot, slot)
+            s_p = ontology.normlize_slot_names.get(slot, slot) # s_p for slot preprocessed
             if s_p in ontology.informable_slots[domain]:
                 for v in values:
                     _, v_p = clean_slot_values(domain, slot, v)
-                    v_p = ' '.join([token.text for token in nlp(v_p)]).strip()
+                    v_p = ' '.join([token.text for token in nlp(v_p)]).strip() # tokenization
                     processed[domain][s_p].append(v_p)
                     for x in v_p.split():
                         if x not in bspn_word:
                             bspn_word.append(x)
-
+    # add potentielly omitted item in prev steps?
     for domain_slot, values in otlg.items():
         domain, slot = domain_slot.split('-')
         if domain == 'bus':
@@ -335,14 +346,14 @@ class DataPreprocessor(object):
                     constraints = []
                     cons_delex = []
                     turn_dom_bs = []
-                    for domain, info_slots in constraint_dict.items():
+                    for domain, info_slots in constraint_dict.items(): # add conuter_fact belief state here as additional dict
                         if info_slots:
                             constraints.append('['+domain+']')
                             cons_delex.append('['+domain+']')
                             for slot, value in info_slots.items():
                                 constraints.append(slot)
-                                constraints.extend(value.split())
-                                cons_delex.append(slot)
+                                constraints.extend(value.split()) # add slot and value. ex: ['[hotel]', 'pricerange', 'cheap', 'type', 'hotel']
+                                cons_delex.append(slot) # add only slot. ex: ['[hotel]', 'pricerange', 'type']
                             if domain not in prev_constraint_dict:
                                 turn_dom_bs.append(domain)
                             elif prev_constraint_dict[domain] != constraint_dict[domain]:
@@ -351,7 +362,7 @@ class DataPreprocessor(object):
 
                     sys_act_dict = {}
                     turn_dom_da = set()
-                    for act in dial_turn['dialog_act']:
+                    for act in dial_turn['dialog_act']: # {'hotel-request': [['area', '?']]}
                         d, a = act.split('-')
                         turn_dom_da.add(d)
                     turn_dom_da = list(turn_dom_da)
@@ -381,7 +392,7 @@ class DataPreprocessor(object):
                     for act, params in dial_turn['dialog_act'].items():
                         if act == 'general-greet':
                             continue
-                        d, a = act.split('-')
+                        d, a = act.split('-') # domain-act. ex: hotel-request
                         if d == 'general' and d not in sys_act_dict:
                             sys_act_dict[d] = {}
                         if d == 'booking':
@@ -399,7 +410,7 @@ class DataPreprocessor(object):
                         add_to_last = True if a in ['request', 'reqmore', 'bye', 'offerbook'] else False
                         if add_to_last:
                             add_to_last_collect.append((d,a,add_p))
-                        else:
+                        else: # inform. ex: {'booking-inform': [['none', 'none']], 'hotel-inform': [['price', 'cheap'], ['choice', '1'], ['parking', 'none']]} -> output: sys_act_dict[d] = {'inform': ['price', 'choice', 'parking']}
                             sys_act_dict[d][a] = add_p
                     for d, a, add_p in add_to_last_collect:
                         sys_act_dict[d][a] = add_p
@@ -441,6 +452,28 @@ class DataPreprocessor(object):
                     single_turn['sys_act'] = ' '.join(sys_act)
                     single_turn['turn_num'] = len(dial['log'])
                     single_turn['turn_domain'] = ' '.join(['['+d+']' for d in turn_domain])
+                    '''
+                    example:
+
+                    for dial_turn
+                    {'text': 'i found 1 cheap hotel for you that includes parking . do you like me to book it ?', 
+                    'metadata': {'taxi': {'book': {'booked': []}, 'semi': {'leaveat': '', 'destination': '', 'departure': '', 'arriveby': ''}}, 'police': {'book': {'booked': []}, 'semi': {}}, 'restaurant': {'book': {'booked': [], 'time': '', 'day': '', 'people': ''}, 'semi': {'food': '', 'pricerange': '', 'name': '', 'area': ''}}, 'hospital': {'book': {'booked': []}, 'semi': {'department': ''}}, 
+                    'hotel': {'book': {'booked': [], 'stay': '', 'day': '', 'people': ''}, 'semi': {'name': 'not mentioned', 'area': 'not mentioned', 'parking': 'yes', 'pricerange': 'cheap', 'stars': 'not mentioned', 'internet': 'not mentioned', 'type': 'hotel'}}, 'attraction': {'book': {'booked': []}, 'semi': {'type': '', 'name': '', 'area': ''}}, 'train': {'book': {'booked': [], 'people': ''}, 'semi': {'leaveat': '', 'destination': '', 'day': '', 'arriveby': '', 'departure': ''}}}, 
+                    'dialog_act': {'booking-inform': [['none', 'none']], 'hotel-inform': [['price', 'cheap'], ['choice', '1'], ['parking', 'none']]}, 
+                    'span_info': [['hotel-inform', 'price', 'cheap', 3, 3], ['hotel-inform', 'choice', '1', 2, 2]]}
+
+                    'user': 'no , i just need to make sure it is cheap . oh , and i need parking', 
+                    'user_delex': 'no , i just need to make sure it is [value_pricerange] . oh , and i need parking', 
+                    'resp': 'i found [value_choice] [value_price] hotel for you that include -s parking . do you like me to book it ?', 
+                    'resp_nodelex': 'i found 1 cheap hotel for you that include -s parking . do you like me to book it ?', 
+                    'pointer': '0,1,0,0,0,0', 
+                    'match': '1', 
+                    'constraint': '[hotel] pricerange cheap type hotel parking yes', 
+                    'cons_delex': '[hotel] pricerange type parking', 
+                    'sys_act': '[hotel] [inform] price choice parking [offerbook]', 
+                    'turn_num': 1, 
+                    'turn_domain': '[hotel]'
+                    '''
 
                     prev_turn_domain = copy.deepcopy(turn_domain)
                     prev_constraint_dict = copy.deepcopy(constraint_dict)

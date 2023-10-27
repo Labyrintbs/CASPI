@@ -24,7 +24,7 @@ def analysis():
     archive = zipfile.ZipFile(data_path+data_file+'.zip', 'r')
     data = archive.open(data_file, 'r').read().decode('utf-8').lower()
     ref_nos = list(set(re.findall(r'\"reference\"\: \"(\w+)\"', data)))
-    data = json.loads(data)
+    data = json.loads(data) # dict, k is data's json name, such as 'sng01856.json'
 
     for fn, dial in data.items():
         goals = dial['goal']
@@ -76,11 +76,11 @@ def analysis():
             dom_str = ''
             for dom in dial_domains:
                 if not dom_count.get(dom+'_'+dial_type):
-                    dom_count[dom+'_'+dial_type] = 1
+                    dom_count[dom+'_'+dial_type] = 1 # {'hotel_single': 1}
                 else:
                     dom_count[dom+'_'+dial_type] += 1
                 if not dom_fnlist.get(dom+'_'+dial_type):
-                    dom_fnlist[dom+'_'+dial_type] = [fn]
+                    dom_fnlist[dom+'_'+dial_type] = [fn] # {'hotel_single': ['sng01856.json']}
                 else:
                     dom_fnlist[dom+'_'+dial_type].append(fn)
                 dom_str += '%s_'%dom

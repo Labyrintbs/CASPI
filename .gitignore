@@ -9,3 +9,4 @@ experiments/**
 damd_multiwoz/log/*.txt
 damd_multiwoz/logs/*.log
 damd_multiwoz/experiments/**
+*.tar.gz
