@@ -264,6 +264,25 @@ class DataPreprocessor(object):
 
         return single_token_values, multi_token_values, ambiguous_entities
 
+    def get_cons_random(self, dial_turn):
+        '''
+        choose one random dial_turn from one random fn, replace current constraints with the random one 
+        return  single_turn['cntfact_constraints_random']
+                single_turn['cntfact_cons_delex_random']
+        '''
+        # note that only system turn(metadate not None) can have constraints
+        return None
+
+    def get_cons_max(self, dial_turn, cross_domain=True):
+
+        '''
+        choose most similar entities from databases, replace current constraints with the max similar one
+        comparison based on available attributes, search across domain possible. For example, hotel and restaurant domains may all have name attribute. 
+        if cross_domain
+        return  single_turn['cntfact_constraints_random']
+                single_turn['cntfact_cons_delex_random']
+        '''
+        return None
 
     def preprocess_main(self, save_path=None, is_test=False):
         """
@@ -514,7 +533,7 @@ if __name__=='__main__':
             'taxi': 'db/taxi_db.json',
             'train': 'db/train_db.json',
         }
-    pdb.set_trace()
+    #pdb.set_trace()
     get_db_values('db/value_set.json')
     preprocess_db(db_paths)
     dh = DataPreprocessor()

@@ -87,7 +87,7 @@
     "postcode": "cb13js",
     "pricerange": "cheap",
     "stars": "4",
-    "n": "yes",
+    "takesbookings": "yes", 
     "type": "guest house"
   },
   {

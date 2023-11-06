@@ -527,7 +527,7 @@ def main():
     parser.add_argument('-mode')
     parser.add_argument('-cfg', nargs='*')
     args = parser.parse_args()
-    pdb.set_trace()
+    #pdb.set_trace()
     cfg.mode = args.mode
     if args.mode == 'test' or args.mode=='adjust':
         parse_arg_cfg(args)
