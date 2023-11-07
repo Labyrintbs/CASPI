@@ -98,6 +98,13 @@ class _Config:
         self.nucleur_p = 0.
         self.record_mode = False
 
+        # counter_fact experiment settings
+        self.skip_preprocess = True # jump redump of domain_db.json to domain_db_processed.json
+        self.preprocess_model_path = '../../all-MiniLM-L6-v2/'
+        self.topk_cntfact = 5
+        self.cntfact_max_mode = True # replace belief state with one topk counterfact item's
+        self.cntfact_max_save_path = 'data/multi-woz-processed/cntfact_data_for_damd.json'
+
     def __str__(self):
         s = ''
         for k,v in self.__dict__.items():

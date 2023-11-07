@@ -7,6 +7,40 @@ from config import global_config as cfg
 from db_ops import MultiWozDB
 from clean_dataset import clean_slot_values, clean_text
 import pdb
+from sentence_transformers import SentenceTransformer, util
+import torch
+import pprint
+import random, copy
+
+def convert2str(value):
+    '''
+    convert non str object to str
+    '''
+    if isinstance(value, list):
+        return ', '.join(map(str, value))
+    elif isinstance(value, dict):
+        return ', '.join(f'{k}, {v}' for k, v in value.items())
+    elif isinstance(value, str):
+        return value
+    else:
+        print(f'value {value} type {type(value)} not considered!')
+
+def extract_dom_data(data_path):
+    with open (data_path, 'r') as f:
+        data = json.loads(f.read().lower())
+    slot_dict = {}
+    uncomplete_slot = {'signature', 'phone', 'introduction'}
+    for item in data:
+        if 'restaurant' in data_path:
+            blank_slot = uncomplete_slot - uncomplete_slot.intersection(set(item.keys()))
+            for slot in list(blank_slot):
+                item[slot] = ' '
+        for slot, value in item.items():
+            if not slot_dict.get(slot):
+                slot_dict[slot] = [convert2str(value)]
+            else:
+                slot_dict[slot].append(convert2str(value))
+    return slot_dict
 
 def get_db_values(value_set_path):
     processed = {}
@@ -131,6 +165,17 @@ class DataPreprocessor(object):
             self.ambiguous_vals = json.loads(open(self.ambiguous_val_path, 'r').read())
 
         self.vocab = utils.Vocab(cfg.vocab_size)
+        self.pre_db_paths = {
+            'attraction': 'db/attraction_db_processed.json',
+            'hospital': 'db/hospital_db_processed.json',
+            'hotel': 'db/hotel_db_processed.json',
+            'police': 'db/police_db_processed.json',
+            'restaurant': 'db/restaurant_db_processed.json',
+            'taxi': 'db/taxi_db_processed.json',
+            'train': 'db/train_db_processed.json',
+        }
+        self.device = 'cuda:0'
+        self.model = SentenceTransformer(cfg.preprocess_model_path)
 
 
     def delex_by_annotation(self, dial_turn):
@@ -264,25 +309,71 @@ class DataPreprocessor(object):
 
         return single_token_values, multi_token_values, ambiguous_entities
 
-    def get_cons_random(self, dial_turn):
+    def construct_cons_random(self, cons_dict, cross_domain=False):
         '''
-        choose one random dial_turn from one random fn, replace current constraints with the random one 
-        return  single_turn['cntfact_constraints_random']
-                single_turn['cntfact_cons_delex_random']
+        choose one random item within domain, replace current constraints with the random one 
+
+        Input:  cons_dict, OrderedDict
+        Ex: [('hotel', OrderedDict([('pricerange', 'cheap'), ('type', 'hotel')]))]
+
+        Output: cons_dict_random, OrderedDict
         '''
         # note that only system turn(metadate not None) can have constraints
         return None
 
-    def get_cons_max(self, dial_turn, cross_domain=True):
+    def construct_cons_max(self, cons_dict, cross_domain=False, debug=False):
+        '''
+        choose most simliar item within domain, replace current constraints with the random one 
 
+        Input:  cons_dict, OrderedDict
+        Ex: [('hotel', OrderedDict([('pricerange', 'cheap'), ('type', 'hotel')]))]
+
+        Output: cons_dict_random, OrderedDict
         '''
-        choose most similar entities from databases, replace current constraints with the max similar one
-        comparison based on available attributes, search across domain possible. For example, hotel and restaurant domains may all have name attribute. 
-        if cross_domain
-        return  single_turn['cntfact_constraints_random']
-                single_turn['cntfact_cons_delex_random']
-        '''
-        return None
+        total_scores = 0
+        if len(list(cons_dict.keys())) >=2 and debug:
+            print('current cons_dict contains more than 1 dom:', list(cons_dict.keys()))
+        for dom, slot_values in cons_dict.items():
+            dom_dict = extract_dom_data(self.pre_db_paths[dom])
+            for slot, value in slot_values.items():
+                query = convert2str(value)
+                corpus = dom_dict[slot]
+                corpus_embeddings = self.model.encode(corpus, convert_to_tensor=True)
+                query_embedding = self.model.encode(query, convert_to_tensor=True)
+                top_k = min(cfg.topk_cntfact, len(corpus))
+                # We use cosine-similarity and torch.topk to find the highest 5 scores
+                cos_scores = util.cos_sim(query_embedding, corpus_embeddings)[0]
+                #print(f'cos_scors shape: {cos_scores.shape}')
+                total_scores += cos_scores
+            total_scores /= len(list(slot_values.keys()))
+            domain_top_results = torch.topk(total_scores, k=top_k)
+            top_k_index = domain_top_results[1].tolist()
+            current_item = top_k_index.pop(0)
+            cntfact_indice = random.choice(top_k_index)
+            # replace cntfact value for current cons_dict's slot
+            with open (self.pre_db_paths[dom], 'r') as f:
+                dom_data = json.loads(f.read().lower())
+                cntfact_item = dom_data[cntfact_indice]
+                cntfact_cons_dict = copy.deepcopy(cons_dict)
+                for slot, _ in slot_values.items():
+                    if cntfact_item.get(slot):
+                        cntfact_cons_dict[dom][slot] = cntfact_item[slot]
+                    else:
+                        cntfact_cons_dict[dom][slot] = ' '
+                
+            if debug:
+                print("\n\n======================\n\n")
+                print("Query:", query)
+                print("\nTop 5 most similar sentences in corpus:")
+                print('original item:')
+                pprint.pprint(dom_data[current_item]) 
+                print('cntfact item:')
+                pprint.pprint(cntfact_item)
+                print('top scores and index:')
+                for score, idx in zip(domain_top_results[0], domain_top_results[1]):
+                    print("index: {}".format(idx), "(Score: {:.4f})".format(score))
+                
+        return cntfact_cons_dict
 
     def preprocess_main(self, save_path=None, is_test=False):
         """
@@ -361,7 +452,7 @@ class DataPreprocessor(object):
                                 v = ' '.join([token.text for token in self.nlp(v)]).strip()
                             if v != '':
                                 constraint_dict[domain][s] = v
-
+                    pdb.set_trace()
                     constraints = []
                     cons_delex = []
                     turn_dom_bs = []
@@ -377,7 +468,23 @@ class DataPreprocessor(object):
                                 turn_dom_bs.append(domain)
                             elif prev_constraint_dict[domain] != constraint_dict[domain]:
                                 turn_dom_bs.append(domain)
-
+                    if cfg.cntfact_max_mode:
+                        cntfact_constraint_dict = self.construct_cons_max(constraint_dict, debug=True)
+                        cntfact_constraints = []
+                        cntfact_cons_delex = []
+                        cntfact_turn_dom_bs = []
+                        for domain, info_slots in cntfact_constraint_dict.items(): # add conuter_fact belief state here as additional dict
+                            if info_slots:
+                                cntfact_constraints.append('['+domain+']')
+                                cntfact_cons_delex.append('['+domain+']')
+                                for slot, value in info_slots.items():
+                                    cntfact_constraints.append(slot)
+                                    cntfact_constraints.extend(value.split()) # add slot and value. ex: ['[hotel]', 'pricerange', 'cheap', 'type', 'hotel']
+                                    cntfact_cons_delex.append(slot) # add only slot. ex: ['[hotel]', 'pricerange', 'type']
+                                if domain not in prev_constraint_dict:
+                                    cntfact_turn_dom_bs.append(domain)
+                                elif prev_constraint_dict[domain] != cntfact_constraint_dict[domain]:
+                                    cntfact_turn_dom_bs.append(domain) 
 
                     sys_act_dict = {}
                     turn_dom_da = set()
@@ -468,6 +575,9 @@ class DataPreprocessor(object):
                     single_turn['match'] = str(match)
                     single_turn['constraint'] = ' '.join(constraints)
                     single_turn['cons_delex'] = ' '.join(cons_delex)
+                    if cfg.cntfact_max_mode:
+                        single_turn['cntfact_constraint_max'] = ''.join(cntfact_constraints)
+                        single_turn['cntfact_cons_delex_max'] = ''.join(cntfact_cons_delex)
                     single_turn['sys_act'] = ' '.join(sys_act)
                     single_turn['turn_num'] = len(dial['log'])
                     single_turn['turn_domain'] = ' '.join(['['+d+']' for d in turn_domain])
@@ -535,12 +645,17 @@ if __name__=='__main__':
         }
     #pdb.set_trace()
     get_db_values('db/value_set.json')
-    preprocess_db(db_paths)
+    if not cfg.skip_preprocess:
+        preprocess_db(db_paths)
     dh = DataPreprocessor()
     data = dh.preprocess_main()
     if not os.path.exists('data/multi-woz-processed'):
         os.mkdir('data/multi-woz-processed')
 
-    with open('data/multi-woz-processed/data_for_damd.json', 'w') as f:
-        json.dump(data, f, indent=2)
+    if cfg.cntfact_max_mode:
+        with open(cfg.cntfact_max_save_path, 'w') as f:
+            json.dump(data, f, indent=2)
+    else:
+        with open('data/multi-woz-processed/data_for_damd.json', 'w') as f:
+            json.dump(data, f, indent=2)
 
