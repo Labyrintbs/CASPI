@@ -103,7 +103,8 @@ class _Config:
         self.preprocess_model_path = '../../all-MiniLM-L6-v2/'
         self.topk_cntfact = 5
         self.cntfact_max_mode = True # replace belief state with one topk counterfact item's
-        self.cntfact_max_save_path = 'data/multi-woz-processed/cntfact_data_for_damd.json'
+        self.cntfact_max_save_path = 'data/multi-woz-processed/cntfact_data_for_damd_ratio_1.json'
+        self.cntfact_raio = 1 
 
     def __str__(self):
         s = ''

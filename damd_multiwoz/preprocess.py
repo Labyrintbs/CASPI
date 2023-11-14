@@ -12,6 +12,31 @@ import torch
 import pprint
 import random, copy
 
+SPECIFIC_SLOT =  { # The slot not in database's item's slot
+  "restaurant": [
+    "time",
+    "day",
+    "people"
+  ],
+  "hotel": [
+    "stay",
+    "day",
+    "people",
+  ],
+  "train": [
+    "people",
+  ],
+  "police": [],
+  "taxi":[
+    "leave", 
+    "destination", 
+    "departure", 
+    "arrive",
+    "day"],
+  "attraction":[],
+  "hospital":[]
+}
+
 def convert2str(value):
     '''
     convert non str object to str
@@ -22,16 +47,22 @@ def convert2str(value):
         return ', '.join(f'{k}, {v}' for k, v in value.items())
     elif isinstance(value, str):
         return value
+    elif isinstance(value, int):
+        return str(value)
     else:
         print(f'value {value} type {type(value)} not considered!')
 
 def extract_dom_data(data_path):
+    '''
+    Input: 1 of 7 domain's processed.json file
+    Output: Dict, k: slot name, v: values, arranged by json's order
+    '''
     with open (data_path, 'r') as f:
         data = json.loads(f.read().lower())
     slot_dict = {}
     uncomplete_slot = {'signature', 'phone', 'introduction'}
     for item in data:
-        if 'restaurant' in data_path:
+        if 'restaurant' in data_path: # complete the missing slot's value with blank str
             blank_slot = uncomplete_slot - uncomplete_slot.intersection(set(item.keys()))
             for slot in list(blank_slot):
                 item[slot] = ' '
@@ -42,6 +73,22 @@ def extract_dom_data(data_path):
                 slot_dict[slot].append(convert2str(value))
     return slot_dict
 
+def extract_value_data(data_path, dom, slot):
+    '''
+    Input: 
+        data_path: the value_set_processed.json path
+        dom: query domain
+        slot: query slot
+    Output:
+        list of slot's values arranged by json's order
+    '''
+    if dom not in SPECIFIC_SLOT.keys():
+        print('There are no special info slot in dom ', dom)
+        return []
+    else:
+        with open (data_path, 'r') as f:
+            data = json.loads(f.read().lower())
+            return data[dom][slot] 
 def get_db_values(value_set_path):
     processed = {}
     bspn_word = []
@@ -165,6 +212,7 @@ class DataPreprocessor(object):
             self.ambiguous_vals = json.loads(open(self.ambiguous_val_path, 'r').read())
 
         self.vocab = utils.Vocab(cfg.vocab_size)
+        self.value_set_path = 'db/value_set_processed.json'
         self.pre_db_paths = {
             'attraction': 'db/attraction_db_processed.json',
             'hospital': 'db/hospital_db_processed.json',
@@ -321,7 +369,7 @@ class DataPreprocessor(object):
         # note that only system turn(metadate not None) can have constraints
         return None
 
-    def construct_cons_max(self, cons_dict, cross_domain=False, debug=False):
+    def construct_cons_max(self, cons_dict, prev_cons_dict, cross_domain=False, debug=False):
         '''
         choose most simliar item within domain, replace current constraints with the random one 
 
@@ -335,43 +383,103 @@ class DataPreprocessor(object):
             print('current cons_dict contains more than 1 dom:', list(cons_dict.keys()))
         for dom, slot_values in cons_dict.items():
             dom_dict = extract_dom_data(self.pre_db_paths[dom])
+            db_slot_num = 0
+            prev_slot = prev_cons_dict[dom].keys() if prev_cons_dict.get(dom) else []
+            special_slot = SPECIFIC_SLOT[dom] if SPECIFIC_SLOT.get(dom) else []
+            top_k = cfg.topk_cntfact
             for slot, value in slot_values.items():
-                query = convert2str(value)
-                corpus = dom_dict[slot]
-                corpus_embeddings = self.model.encode(corpus, convert_to_tensor=True)
-                query_embedding = self.model.encode(query, convert_to_tensor=True)
-                top_k = min(cfg.topk_cntfact, len(corpus))
-                # We use cosine-similarity and torch.topk to find the highest 5 scores
-                cos_scores = util.cos_sim(query_embedding, corpus_embeddings)[0]
-                #print(f'cos_scors shape: {cos_scores.shape}')
-                total_scores += cos_scores
-            total_scores /= len(list(slot_values.keys()))
-            domain_top_results = torch.topk(total_scores, k=top_k)
-            top_k_index = domain_top_results[1].tolist()
-            current_item = top_k_index.pop(0)
-            cntfact_indice = random.choice(top_k_index)
+                if slot not in prev_slot:
+                    if slot not in special_slot:
+                        db_slot_num += 1 
+                        query = convert2str(value)
+                        corpus = dom_dict[slot]
+                        corpus_embeddings = self.model.encode(corpus, convert_to_tensor=True)
+                        query_embedding = self.model.encode(query, convert_to_tensor=True)
+                        #top_k = min(cfg.topk_cntfact, len(corpus))
+                        # We use cosine-similarity and torch.topk to find the highest 5 scores
+                        cos_scores = util.cos_sim(query_embedding, corpus_embeddings)[0]
+                        #print(f'cos_scors shape: {cos_scores.shape}')
+                        total_scores += cos_scores
+                    '''
+                    else: # for special slot, choose one from value_set
+                        db_slot_num += 1
+                        query = convert2str(value)
+                        corpus = extract_value_data(self.value_set_path, dom, slot)
+                    '''
+            if db_slot_num > 0:           
+                total_scores /= db_slot_num
+                domain_top_results = torch.topk(total_scores, k=top_k)
+                top_k_index = domain_top_results[1].tolist()
+                current_item = top_k_index.pop(0)
+
+                cntfact_indice = random.choice(top_k_index)
             # replace cntfact value for current cons_dict's slot
             with open (self.pre_db_paths[dom], 'r') as f:
                 dom_data = json.loads(f.read().lower())
-                cntfact_item = dom_data[cntfact_indice]
-                cntfact_cons_dict = copy.deepcopy(cons_dict)
-                for slot, _ in slot_values.items():
-                    if cntfact_item.get(slot):
-                        cntfact_cons_dict[dom][slot] = cntfact_item[slot]
-                    else:
-                        cntfact_cons_dict[dom][slot] = ' '
-                
+                if db_slot_num > 0:
+                    cntfact_item = dom_data[cntfact_indice]
+                    if debug:
+                        print('\n =========================== \n')
+                        #print('cntfact item ')
+                        #pprint.pprint(cntfact_item)
+
+                cntfact_cons_dict = copy.deepcopy(prev_cons_dict)
+                if debug:
+                    print("\n ************* ori cntfact_cons_dict **************")
+                    print(cntfact_cons_dict)
+                if not prev_cons_dict.get(dom):
+                    #cntfact_cons_dict = copy.deepcopy(prev_cons_dict) # TODO: only copy the single dom's cons_dict, otherwise the prev processed will be modified.
+                    cntfact_cons_dict[dom] = cons_dict[dom] # add new domain's metadata and modify it
+                if debug: 
+                    print("\n ************* copyed but not modified cntfact_cons_dict **************")
+                    print(cntfact_cons_dict)
+                for slot, value in slot_values.items():
+                    if db_slot_num > 0 :
+                        if slot not in prev_slot:
+                            if cntfact_item.get(slot):
+                                cntfact_cons_dict[dom][slot] = cntfact_item[slot]
+                            else:
+                                cntfact_cons_dict[dom][slot] = ' '
+                    elif slot not in prev_slot and slot in SPECIFIC_SLOT[dom]:
+                        query = convert2str(value)
+                        corpus = extract_value_data(self.value_set_path, dom, slot)
+                        top_k = min(cfg.topk_cntfact, len(corpus))
+                        corpus_embeddings = self.model.encode(corpus, convert_to_tensor=True)
+                        query_embedding = self.model.encode(query, convert_to_tensor=True)
+                        cos_scores = util.cos_sim(query_embedding, corpus_embeddings)[0] 
+                        slot_top_results = torch.topk(cos_scores, k=top_k)
+                        top_k_index = slot_top_results[1].tolist()
+                        current_indice = top_k_index.pop(0)
+                        current_value = query
+                        cntfact_indice = random.choice(top_k_index)
+                        if debug:
+                            print('****************** current special value ****************')
+                            print(current_value)
+                            print('****************** cntfact special value ****************')
+                            print(corpus[cntfact_indice])
+                        cntfact_cons_dict[dom][slot] = corpus[cntfact_indice]
+                    #else:
+                    #    cntfact_cons_dict[dom][slot] = ' '
+            prev_cons_dict = cntfact_cons_dict
             if debug:
-                print("\n\n======================\n\n")
-                print("Query:", query)
-                print("\nTop 5 most similar sentences in corpus:")
-                print('original item:')
-                pprint.pprint(dom_data[current_item]) 
-                print('cntfact item:')
-                pprint.pprint(cntfact_item)
-                print('top scores and index:')
-                for score, idx in zip(domain_top_results[0], domain_top_results[1]):
-                    print("index: {}".format(idx), "(Score: {:.4f})".format(score))
+                print('\n ******** modified prev_cons_dict **********')
+                print(prev_cons_dict)
+                
+            if debug:                            
+                print('\n ************** current cons_dict ***************')
+                print(cons_dict)
+                if db_slot_num > 0:
+                    print('original item:')
+                    #pprint.pprint(dom_data[current_item]) 
+                    print("Query:", query)
+                    '''
+                    print("\nTop 5 most similar sentences in corpus:")
+                    print('top scores and index:')
+                    for score, idx in zip(domain_top_results[0], domain_top_results[1]):
+                        print("index: {}".format(idx), "(Score: {:.4f})".format(score))
+                    '''
+                print('\n ************ final turn cntfact_consdict *************')
+                print(cntfact_cons_dict)
                 
         return cntfact_cons_dict
 
@@ -405,7 +513,9 @@ class DataPreprocessor(object):
             dial = {'goal': compressed_goal, 'log': []}
             single_turn = {}
             constraint_dict = OrderedDict()
-            prev_constraint_dict = {}
+            prev_constraint_dict = {} # origin code's sentinal
+            if cfg.cntfact_max_mode:
+                prev_cntfact_constraint_dict = OrderedDict() # initialize prev_cntfact_constraint_dict
             prev_turn_domain = ['general']
             ordered_sysact_dict[fn] = {}
 
@@ -452,7 +562,6 @@ class DataPreprocessor(object):
                                 v = ' '.join([token.text for token in self.nlp(v)]).strip()
                             if v != '':
                                 constraint_dict[domain][s] = v
-                    pdb.set_trace()
                     constraints = []
                     cons_delex = []
                     turn_dom_bs = []
@@ -469,22 +578,36 @@ class DataPreprocessor(object):
                             elif prev_constraint_dict[domain] != constraint_dict[domain]:
                                 turn_dom_bs.append(domain)
                     if cfg.cntfact_max_mode:
-                        cntfact_constraint_dict = self.construct_cons_max(constraint_dict, debug=True)
-                        cntfact_constraints = []
-                        cntfact_cons_delex = []
-                        cntfact_turn_dom_bs = []
-                        for domain, info_slots in cntfact_constraint_dict.items(): # add conuter_fact belief state here as additional dict
-                            if info_slots:
-                                cntfact_constraints.append('['+domain+']')
-                                cntfact_cons_delex.append('['+domain+']')
-                                for slot, value in info_slots.items():
-                                    cntfact_constraints.append(slot)
-                                    cntfact_constraints.extend(value.split()) # add slot and value. ex: ['[hotel]', 'pricerange', 'cheap', 'type', 'hotel']
-                                    cntfact_cons_delex.append(slot) # add only slot. ex: ['[hotel]', 'pricerange', 'type']
-                                if domain not in prev_constraint_dict:
-                                    cntfact_turn_dom_bs.append(domain)
-                                elif prev_constraint_dict[domain] != cntfact_constraint_dict[domain]:
-                                    cntfact_turn_dom_bs.append(domain) 
+                        proba_active = random.random()
+                        #print('current proba:', proba_active)
+                        cntfact_active = proba_active<= cfg.cntfact_raio
+                        #print('current switch', cntfact_active)
+                        if cntfact_active:
+                            #pdb.set_trace()
+                            #print('********** Outer Function **********')
+                            #print('********** prev_cntfact_constraint_dict **********')
+                            #print(prev_cntfact_constraint_dict)
+                            #pdb.set_trace()
+                            cntfact_constraint_dict = self.construct_cons_max(constraint_dict, prev_cntfact_constraint_dict, debug=False)
+                            cntfact_constraints = []
+                            cntfact_cons_delex = []
+                            cntfact_turn_dom_bs = []
+                            for domain, info_slots in cntfact_constraint_dict.items(): # add conuter_fact belief state here as additional dict
+                                if info_slots:
+                                    cntfact_constraints.append('['+domain+']')
+                                    cntfact_cons_delex.append('['+domain+']')
+                                    for slot, value in info_slots.items():
+                                        cntfact_constraints.append(slot)
+                                        cntfact_constraints.extend(value.split()) # add slot and value. ex: ['[hotel]', 'pricerange', 'cheap', 'type', 'hotel']
+                                        cntfact_cons_delex.append(slot) # add only slot. ex: ['[hotel]', 'pricerange', 'type']
+                                    if domain not in prev_constraint_dict:
+                                        cntfact_turn_dom_bs.append(domain)
+                                    elif prev_constraint_dict[domain] != cntfact_constraint_dict[domain]:
+                                        cntfact_turn_dom_bs.append(domain) 
+                        else:
+                            cntfact_constraints = constraints
+                            cntfact_cons_delex = cons_delex
+                            cntfact_turn_dom_bs = turn_dom_bs
 
                     sys_act_dict = {}
                     turn_dom_da = set()
@@ -606,6 +729,11 @@ class DataPreprocessor(object):
 
                     prev_turn_domain = copy.deepcopy(turn_domain)
                     prev_constraint_dict = copy.deepcopy(constraint_dict)
+                    if cfg.cntfact_max_mode:
+                        if cntfact_active:
+                            prev_cntfact_constraint_dict = copy.deepcopy(cntfact_constraint_dict)
+                        else:
+                            prev_cntfact_constraint_dict = copy.deepcopy(constraint_dict)
 
                     if 'user' in single_turn:
                         dial['log'].append(single_turn)
