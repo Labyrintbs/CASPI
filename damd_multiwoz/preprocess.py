@@ -11,6 +11,7 @@ from sentence_transformers import SentenceTransformer, util
 import torch
 import pprint
 import random, copy
+import time
 
 SPECIFIC_SLOT =  { # The slot not in database's item's slot
   "restaurant": [
@@ -378,10 +379,10 @@ class DataPreprocessor(object):
 
         Output: cons_dict_random, OrderedDict
         '''
-        total_scores = 0
         if len(list(cons_dict.keys())) >=2 and debug:
             print('current cons_dict contains more than 1 dom:', list(cons_dict.keys()))
         for dom, slot_values in cons_dict.items():
+            total_scores = 0
             dom_dict = extract_dom_data(self.pre_db_paths[dom])
             db_slot_num = 0
             prev_slot = prev_cons_dict[dom].keys() if prev_cons_dict.get(dom) else []
@@ -486,14 +487,16 @@ class DataPreprocessor(object):
     def preprocess_main(self, save_path=None, is_test=False):
         """
         """
+        start_time = time.time()
+        cntfact_total_time = 0
         data = {}
         count=0
         self.unique_da = {}
         ordered_sysact_dict = {}
         for fn, raw_dial in tqdm(list(self.convlab_data.items())):
             count +=1
-            # if count == 100:
-            #     break
+            #if count == 327:
+                #pdb.set_trace()
 
             compressed_goal = {}
             dial_domains, dial_reqs = [], []
@@ -583,12 +586,18 @@ class DataPreprocessor(object):
                         cntfact_active = proba_active<= cfg.cntfact_raio
                         #print('current switch', cntfact_active)
                         if cntfact_active:
-                            #pdb.set_trace()
+                            #if count >= 327:
+                                #pdb.set_trace()
                             #print('********** Outer Function **********')
                             #print('********** prev_cntfact_constraint_dict **********')
                             #print(prev_cntfact_constraint_dict)
                             #pdb.set_trace()
+                            cntfact_start = time.time()
                             cntfact_constraint_dict = self.construct_cons_max(constraint_dict, prev_cntfact_constraint_dict, debug=False)
+                            cntfact_end = time.time()
+                            cntfact_total_time += cntfact_end - cntfact_start
+                            if count % 100 == 0:
+                                print('current avarage time consumption', cntfact_total_time / count)
                             cntfact_constraints = []
                             cntfact_cons_delex = []
                             cntfact_turn_dom_bs = []
@@ -699,8 +708,8 @@ class DataPreprocessor(object):
                     single_turn['constraint'] = ' '.join(constraints)
                     single_turn['cons_delex'] = ' '.join(cons_delex)
                     if cfg.cntfact_max_mode:
-                        single_turn['cntfact_constraint_max'] = ''.join(cntfact_constraints)
-                        single_turn['cntfact_cons_delex_max'] = ''.join(cntfact_cons_delex)
+                        single_turn['cntfact_constraint_max'] = ' '.join(cntfact_constraints)
+                        single_turn['cntfact_cons_delex_max'] = ' '.join(cntfact_cons_delex)
                     single_turn['sys_act'] = ' '.join(sys_act)
                     single_turn['turn_num'] = len(dial['log'])
                     single_turn['turn_domain'] = ' '.join(['['+d+']' for d in turn_domain])
@@ -751,13 +760,14 @@ class DataPreprocessor(object):
             data[fn] = dial
             # pprint(dial)
             # if count == 20:
-            #     break
-        self.vocab.construct()
-        self.vocab.save_vocab('data/multi-woz-processed/vocab')
-        with open('data/multi-woz-analysis/dialog_acts.json', 'w') as f:
-            json.dump(ordered_sysact_dict, f, indent=2)
-        with open('data/multi-woz-analysis/dialog_act_type.json', 'w') as f:
-            json.dump(self.unique_da, f, indent=2)
+            #    break
+        if not cfg.cntfact_max_mode:
+            self.vocab.construct()
+            self.vocab.save_vocab('data/multi-woz-processed/vocab')
+            with open('data/multi-woz-analysis/dialog_acts.json', 'w') as f:
+                json.dump(ordered_sysact_dict, f, indent=2)
+            with open('data/multi-woz-analysis/dialog_act_type.json', 'w') as f:
+                json.dump(self.unique_da, f, indent=2)
         return data
 
 
