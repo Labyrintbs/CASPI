@@ -31,7 +31,7 @@ class _Config:
         self.mode = 'unknown'
         self.cuda = True
         self.cuda_device = [1]
-        self.exp_no = ''
+        self.exp_no = 'no_bs'
         self.seed = 11
         self.exp_domains = ['all']
         self.save_log = True
@@ -55,7 +55,7 @@ class _Config:
         self.copy_param_share = False
         self.enable_aspn = False
         self.use_pvaspn = False
-        self.enable_bspn = True
+        self.enable_bspn = True #True
         self.bspn_mode = 'bspn' # 'bspn' or 'bsdx'
         self.enable_dspn = False # removed
         self.enable_dst = True
@@ -99,10 +99,13 @@ class _Config:
         self.record_mode = False
 
         # counter_fact experiment settings
+        self.enable_cntfact = False
+        self.cntfact_bspn_mode = 'cntfact_bspn'
+        self.use_true_curr_cntfact_bspn = False
         self.skip_preprocess = True # jump redump of domain_db.json to domain_db_processed.json
         self.preprocess_model_path = '../../all-MiniLM-L6-v2/'
         self.topk_cntfact = 5
-        self.cntfact_max_mode = True # replace belief state with one topk counterfact item's
+        self.cntfact_max_mode = False # replace belief state with one topk counterfact item's
         self.cntfact_max_save_path = 'data/multi-woz-processed/cntfact_data_for_damd_ratio_0.1.json'
         self.cntfact_raio = 0.1
 

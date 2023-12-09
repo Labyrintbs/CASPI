@@ -30,14 +30,14 @@ root_path=./damd_multiwoz
 per_epoch_report_path=${root_path}/data/multi-woz-oppe/reward/reward_report_${K}_${metric}_${fold}_dp.csv
 dev_list=${root_path}/data/multi-woz-processed/rewardListFile_${K}_${fold}.json
 
-exp_name=reward_K_${K}_fold_${fold}_metric_${metric}_seed_${seed}
+exp_name=with_bs_reward_K_${K}_fold_${fold}_metric_${metric}_seed_${seed}
 
 log_file=${exp_name}.log
 log_path=${root_path}/logs/${log_file}
 echo 'To view log tail:'${log_path}
 
 python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
-	exp_no=no_aug batch_size=128 multi_acts_training=False \
+	exp_no=no_aug_with_bs batch_size=128 multi_acts_training=False \
 	use_true_curr_bspn=${use_true_curr_bspn} \
 	enable_aspn=${enable_aspn} \
 	bspn_mode=${bspn_mode} \

@@ -7,6 +7,7 @@ from collections import OrderedDict
 from db_ops import MultiWozDB
 from config import global_config as cfg
 from otherconfig import other_config
+import pdb
 
 class _ReaderBase(object):
 
@@ -197,7 +198,7 @@ class MultiWozReader(_ReaderBase):
 
         else:
             self.vocab_size = self._build_vocab()
-        self._load_data()
+        self._load_data() # convert preprocessed data into train mode
 
         if cfg.limit_bspn_vocab:
             self.bspn_masks = self._construct_bspn_constraint()
@@ -334,6 +335,9 @@ class MultiWozReader(_ReaderBase):
             enc['bsdx'] = self.vocab.sentence_encode(t['cons_delex'].split() + ['<eos_b>'])
             enc['aspn'] = self.vocab.sentence_encode(t['sys_act'].split() + ['<eos_a>'])
             enc['dspn'] = self.vocab.sentence_encode(t['turn_domain'].split() + ['<eos_d>'])
+            if cfg.cntfact_max_mode:
+                enc['cntfact_bspn'] = self.vocab.sentence_encode(t['cntfact_constraint_max'].split() + ['<eos_b>'])
+                enc['cntfact_bsdx'] = self.vocab.sentence_encode(t['cntfact_cons_delex_max'].split() + ['<eos_b>'])
             
             state = t['cons_delex']
             
@@ -488,15 +492,19 @@ class MultiWozReader(_ReaderBase):
                     continue
                 if not cfg.enable_dspn and 'dspn' in item:
                     continue
-                prev_np = utils.padSeqs(py_list, truncated=cfg.truncated, trunc_method='pre')
+                prev_np = utils.padSeqs(py_list, truncated=cfg.truncated, trunc_method='pre') # py_list: (batch,) prev_np: (batch, pad)
                 inputs[item+'_np'] = prev_np
-                if item in ['pv_resp', 'pv_bspn']:
+                if item in ['pv_resp', 'pv_bspn', 'pv_cntfact_bspn']:
                     inputs[item+'_unk_np'] = deepcopy(inputs[item+'_np'])
-                    inputs[item+'_unk_np'][inputs[item+'_unk_np']>=self.vocab_size] = 2   # <unk>
+                    inputs[item+'_unk_np'][inputs[item+'_unk_np']>=self.vocab_size] = 2   # set word index > vocab size to <unk>
                 else:
                     inputs[item+'_unk_np'] = inputs[item+'_np']
+        if cfg.cntfact_max_mode:
+            inputs_keys = ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn', 'cntfact_bspn', 'cntfact_bsdx']
+        else:
+            inputs_keys = ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn'] 
 
-        for item in ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn']:
+        for item in inputs_keys:
             if not cfg.enable_aspn and item == 'aspn':
                 continue
             if not cfg.enable_bspn and item == 'bspn':
@@ -508,7 +516,7 @@ class MultiWozReader(_ReaderBase):
             trunc_method = 'post' if item == 'resp' else 'pre'
             # max_length = cfg.max_nl_length if item in ['user', 'usdx', 'resp'] else cfg.max_span_length
             inputs[item+'_np'] = utils.padSeqs(py_list, truncated=cfg.truncated, trunc_method=trunc_method)
-            if item in ['user', 'usdx', 'resp', 'bspn']:
+            if item in ['user', 'usdx', 'resp', 'bspn', 'cntfact_bspn']:
                 inputs[item+'_unk_np'] = deepcopy(inputs[item+'_np'])
                 inputs[item+'_unk_np'][inputs[item+'_unk_np']>=self.vocab_size] = 2   # <unk>
             else:

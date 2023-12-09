@@ -50,9 +50,13 @@ class Model(object):
 
     def add_torch_input(self, inputs, mode='train', first_turn=False):
         need_onehot = ['user', 'usdx', 'bspn', 'aspn', 'pv_resp', 'pv_bspn', 'pv_aspn',
-                                   'dspn', 'pv_dspn', 'bsdx', 'pv_bsdx']
+                                   'dspn', 'pv_dspn', 'bsdx', 'pv_bsdx', 'cntfact_bspn', 'pv_cntfact_bspn', 'cntfact_bsdx', 'pv_cntfact_bsdx']
         inputs['db'] = cuda_(torch.from_numpy(inputs['db_np']).float())
-        for item in ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn']:
+        if cfg.cntfact_max_mode:
+            input_keys = ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn', 'cntfact_bspn', 'cntfact_bsdx']
+        else:
+            input_keys = ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn']
+        for item in input_keys:
             if not cfg.enable_aspn and item == 'aspn':
                 continue
             if not cfg.enable_bspn and item == 'bspn':
@@ -60,16 +64,16 @@ class Model(object):
             if not cfg.enable_dspn and item == 'dspn':
                 continue
             inputs[item] = cuda_(torch.from_numpy(inputs[item+'_unk_np']).long())
-            if item in ['user', 'usdx', 'resp', 'bspn']:
+            if item in ['user', 'usdx', 'resp', 'bspn', 'cntfact_bspn']:
                 inputs[item+'_nounk'] = cuda_(torch.from_numpy(inputs[item+'_np']).long())
             else:
                 inputs[item+'_nounk'] = inputs[item]
             # print(item, inputs[item].size())
-            if item in ['resp', 'bspn', 'aspn', 'bsdx', 'dspn']:
+            if item in ['resp', 'bspn', 'aspn', 'bsdx', 'dspn', 'cntfact_bspn', 'cntfact_bsdx']:
                 if 'pv_'+item+'_unk_np' not in inputs:
                     continue
                 inputs['pv_'+item] = cuda_(torch.from_numpy(inputs['pv_'+item+'_unk_np']).long())
-                if item in ['user', 'usdx', 'bspn']:
+                if item in ['user', 'usdx', 'bspn', 'cntfact_bspn']:
                     inputs['pv_'+item+'_nounk'] = cuda_(torch.from_numpy(inputs['pv_'+item+'_np']).long())
                     inputs[item+'_4loss'] = self.index_for_loss(item, inputs)
                 else:
@@ -96,8 +100,12 @@ class Model(object):
         raw_labels = inputs[item+'_np']
         if item == 'bspn':
             copy_sources = [inputs['user_np'], inputs['pv_resp_np'], inputs['pv_bspn_np']]
+        elif item == 'cntfact_bspn':
+            copy_sources = [inputs['user_np'], inputs['pv_resp_np'], inputs['pv_cntfact_bspn_np']]
         elif item == 'bsdx':
             copy_sources = [inputs['usdx_np'], inputs['pv_resp_np'], inputs['pv_bsdx_np']]
+        elif item == 'cntfact_bsdx':
+            copy_sources = [inputs['usdx_np'], inputs['pv_resp_np'], inputs['pv_cntfact_bsdx_np']]
         elif item == 'aspn':
             copy_sources = []
             if cfg.use_pvaspn:
@@ -115,6 +123,7 @@ class Model(object):
         else:
             return
         new_labels = np.copy(raw_labels)
+        #pdb.set_trace()
         if copy_sources:
             bidx, tidx = np.where(raw_labels>=self.reader.vocab_size)
             copy_sources = np.concatenate(copy_sources, axis=1)
@@ -144,14 +153,21 @@ class Model(object):
             data_iterator = self.reader.get_batches('train')
             for iter_num, dial_batch in enumerate(data_iterator):
                 hidden_states = {}
-                py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None}
+                if cfg.cntfact_max_mode:
+                    py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None, 'pv_cntfact_bspn': None, 'pv_cntfact_bsdx': None}
+                else:
+                    py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None}
                 bgt = time.time()
-                for turn_num, turn_batch in enumerate(dial_batch):
+                for turn_num, turn_batch in enumerate(dial_batch): # turn_batch: list of batch's number of dict, ['dial_id', 'user', 'usdx', 'resp', 'bspn', 'bsdx', 'aspn', 'dspn', 'pointer', 'input_pointer', 'turn_domain', 'turn_num']
                     # print('turn %d'%turn_num)
-                    # print(len(turn_batch['dial_id']))
+                    # print(len(turn_batch['dial_id'])) 
                     optim.zero_grad()
                     first_turn = (turn_num==0)
-                    inputs = self.reader.convert_batch(turn_batch, py_prev, first_turn=first_turn)
+                    inputs = self.reader.convert_batch(turn_batch, py_prev, first_turn=first_turn) 
+                    # current inputs:
+                    # ['pv_resp_np', 'pv_resp_unk_np', 'pv_bspn_np', 'pv_bspn_unk_np', 'pv_aspn_np', 'pv_aspn_unk_np', 'pv_dspn_np', 'pv_dspn_unk_np', 'pv_bsdx_np', 
+                    # 'pv_bsdx_unk_np', 'user_np', 'user_unk_np', 'usdx_np', 'usdx_unk_np', 'resp_np', 'resp_unk_np', 'bspn_np', 'bspn_unk_np', 'aspn_np', 'aspn_unk_np', 
+                    # 'bsdx_np', 'bsdx_unk_np', 'db_np', 'turn_domain', 'dial_id', 'turn_num']
                     # for k,v in inputs.items():
                     #     if k in ["turn_domain",'db_np']:
                     #         print(f"{k}: {v[0]}")
@@ -160,6 +176,13 @@ class Model(object):
                     # if turn_num==1:
                     #     exit(0)
                     inputs = self.add_torch_input(inputs, first_turn=first_turn)
+                    # current inputs:
+                    # ['pv_resp_np', 'pv_resp_unk_np', 'pv_bspn_np', 'pv_bspn_unk_np', 'pv_aspn_np', 'pv_aspn_unk_np', 'pv_dspn_np', 'pv_dspn_unk_np', 'pv_bsdx_np', 
+                    # 'pv_bsdx_unk_np', 'user_np', 'user_unk_np', 'usdx_np', 'usdx_unk_np', 'resp_np', 'resp_unk_np', 'bspn_np', 'bspn_unk_np', 'aspn_np', 'aspn_unk_np', 
+                    # 'bsdx_np', 'bsdx_unk_np', 'db_np', 'turn_domain', 'dial_id', 'turn_num', 'db', 'user', 'user_nounk', 'user_onehot', 'usdx', 'usdx_nounk', 'usdx_onehot', 
+                    # 'resp', 'resp_nounk', 'pv_resp', 'pv_resp_nounk', 'resp_4loss', 'pv_resp_onehot', 'bspn', 'bspn_nounk', 'pv_bspn', 'pv_bspn_nounk', 'bspn_4loss', 
+                    # 'pv_bspn_onehot', 'bspn_onehot', 'aspn', 'aspn_nounk', 'pv_aspn', 'pv_aspn_nounk', 'aspn_4loss', 'pv_aspn_onehot', 'aspn_onehot', 'bsdx', 'bsdx_nounk', 
+                    # 'pv_bsdx', 'pv_bsdx_nounk', 'bsdx_4loss', 'pv_bsdx_onehot', 'bsdx_onehot'])
                     # total_loss, losses, hidden_states = self.m(inputs, hidden_states, first_turn, mode='train')
                     total_loss, losses = self.m(inputs, hidden_states, first_turn, mode='train')
                     # print('forward completed')
@@ -171,6 +194,9 @@ class Model(object):
                         py_prev['pv_aspn'] = turn_batch['aspn']
                     if cfg.enable_dspn:
                         py_prev['pv_dspn'] = turn_batch['dspn']
+                    if cfg.cntfact_max_mode:
+                        py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx']
+                        py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn']
 
                     total_loss = total_loss.mean()
                     # print('forward time:%f'%(time.time()-test_begin))
@@ -248,7 +274,10 @@ class Model(object):
         result_collection = {}
         for batch_num, dial_batch in enumerate(data_iterator):
             hidden_states = {}
-            py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None}
+            if cfg.cntfact_max_mode:
+                py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None, 'pv_cntfact_bspn': None, 'pv_cntfact_bsdx': None}
+            else:
+                py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None}
             for turn_num, turn_batch in enumerate(dial_batch):
                 first_turn = (turn_num==0)
                 inputs = self.reader.convert_batch(turn_batch, py_prev, first_turn=first_turn)
@@ -264,6 +293,10 @@ class Model(object):
                         py_prev['pv_aspn'] = turn_batch['aspn']
                     if cfg.enable_dspn:
                         py_prev['pv_dspn'] = turn_batch['dspn']
+                    if cfg.cntfact_max_mode:
+                        py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx']
+                        py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn']
+                    #TODO: add cntfact loss here
 
                     if cfg.valid_loss == 'total_loss':
                         valid_loss += float(total_loss)

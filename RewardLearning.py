@@ -6,6 +6,7 @@ from tensorflow.keras.metrics import *
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.optimizers import *
 from tensorflow.keras import backend as K
+from tensorflow.keras.utils import to_categorical
 import os
 from random import shuffle
 import re
@@ -18,6 +19,7 @@ import pandas as pd
 from argparse import ArgumentParser
 import random
 import pdb
+import datetime
 
 
 class RewardLearning():
@@ -469,6 +471,26 @@ class RewardLearning():
         self.model_reward = self.build_reward_model()
         self.model_preferential = self._build_preferential_model()
         self.model_preferential.compile(loss='categorical_crossentropy', optimizer='adam')
+        '''
+        log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        tensorboard_callback = TensorBoard(log_dir=log_dir, histogram_freq=1, write_graph=True)
+        # Create dummy data for each input, ensuring the shapes match the model's input layers
+        dummy_s_1 = np.zeros((1, self.MAX_TIME_STEP, self.MAX_STATE_LEN, self.EMBED_DIM))
+        dummy_a_1 = np.zeros((1, self.MAX_TIME_STEP, self.MAX_ACT_LEN, self.EMBED_DIM))
+        dummy_g_1 = np.zeros((1, self.MAX_GOAL_LEN, self.EMBED_DIM))
+
+        dummy_s_2 = np.zeros((1, self.MAX_TIME_STEP, self.MAX_STATE_LEN, self.EMBED_DIM))
+        dummy_a_2 = np.zeros((1, self.MAX_TIME_STEP, self.MAX_ACT_LEN, self.EMBED_DIM))
+        dummy_g_2 = np.zeros((1, self.MAX_GOAL_LEN, self.EMBED_DIM))
+        # Assuming you have 2 classes for the dummy target
+        num_classes = 2
+        dummy_target = np.zeros((1, 1))
+        dummy_target_one_hot = to_categorical(dummy_target, num_classes=num_classes)
+        # Use the model's `fit` method with dummy data for all six inputs
+        self.model_preferential.fit([dummy_s_1, dummy_a_1, dummy_g_1, dummy_s_2, dummy_a_2, dummy_g_2], 
+                            dummy_target_one_hot, epochs=1, batch_size=1, 
+                            callbacks=[tensorboard_callback], verbose=0)
+        '''
 
     def train_model(self):
         shuffle(self.dial_ids)

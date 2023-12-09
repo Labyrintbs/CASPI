@@ -531,7 +531,120 @@ class BeliefSpanDecoder(nn.Module):
 
         return probs
 
+class CntfactBeliefSpanDecoder(nn.Module):
+    def __init__(self, embedding, vocab_size_oov, bspn_mode, Wgen=None, dropout=0.):
+        super().__init__()
+        self.embedding = embedding
+        self.embed_size = embedding.embedding_dim
+        self.vsize_oov = vocab_size_oov
 
+        self.bspn_mode = bspn_mode
+
+        self.gru = nn.GRU(3*cfg.hidden_size + self.embed_size, cfg.hidden_size, cfg.dec_layer_num,
+                                     dropout=cfg.dropout, batch_first=True)
+        init_gru(self.gru)
+
+        self.Wgen = nn.Linear(cfg.hidden_size, cfg.vocab_size) if not Wgen else Wgen
+
+        self.attn_user = Attn(cfg.hidden_size)
+        self.attn_pvresp = self.attn_user if cfg.attn_param_share else Attn(cfg.hidden_size)
+        self.attn_pvbspn = self.attn_user if cfg.attn_param_share else Attn(cfg.hidden_size)
+
+        self.cp_user = Copy(cfg.hidden_size, 1.)
+        self.cp_pvresp = self.cp_user if cfg.copy_param_share else Copy(cfg.hidden_size)
+        self.cp_pvbspn = self.cp_user if cfg.copy_param_share else Copy(cfg.hidden_size, 1.)
+
+        self.mask_user = None
+        self.mask_pvresp = None
+        self.mask_pvbspn = None
+
+        self.dropout = dropout
+        self.dropout_layer = nn.Dropout(self.dropout)  # input dropout
+
+
+
+    def forward(self, inputs, hidden_states, dec_last_w, dec_last_h, first_turn, first_step, mode='train'):
+    # def forward(self, inputs, huser, hresp, hbspn, dec_last_w, dec_last_h, first_turn, first_step):
+        """[summary]
+        :param inputs: inputs dict
+        :param hidden_states: hidden states dict, size [B, T, H]
+        :param dec_last_w: word index of last decoding step
+        :param dec_last_h: hidden state of last decoding step
+        :param first_turn: [description], defaults to False
+        :returns: [description]
+        """
+
+        gru_input = []
+        embed_last_w = self.embedding(dec_last_w)
+        # embed_last_w = self.dropout_layer(embed_last_w)
+        gru_input.append(embed_last_w)
+        # print(embed_last_w.size())
+
+        if first_step:
+            self.mask_user = (inputs['user']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+            self.mask_pvresp = (inputs['pv_resp']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+            self.mask_pvbspn = (inputs['pv_'+self.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+            # print('masks:', self.mask_user.device, self.mask_pvresp.device, self.mask_pvbspn.device)
+        if mode == 'test' and not first_step:
+            self.mask_pvresp = (inputs['pv_resp']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+            self.mask_pvbspn = (inputs['pv_'+self.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+
+        # print('user:', inputs['user'][0:2, :])
+        context_user = self.attn_user(dec_last_h, hidden_states['user'], self.mask_user)
+        # context_user = self.attn_user(dec_last_h, huser, self.mask_user)
+        gru_input.append(context_user)
+        # print(context_user.size())
+        if not first_turn:
+            context_pvresp = self.attn_pvresp(dec_last_h, hidden_states['resp'], self.mask_pvresp)
+            context_pvbspn = self.attn_pvbspn(dec_last_h, hidden_states[self.bspn_mode], self.mask_pvbspn)
+
+            # context_pvresp = self.attn_pvresp(dec_last_h, hresp, self.mask_pvresp)
+            # context_pvbspn = self.attn_pvbspn(dec_last_h, hbspn, self.mask_pvbspn)
+        else:
+            batch_size = inputs['user'].size(0)
+            context_pvresp = cuda_(torch.zeros(batch_size, 1, cfg.hidden_size))#.to(context_user.device)
+            context_pvbspn = cuda_(torch.zeros(batch_size, 1, cfg.hidden_size))#.to(context_user.device)
+        gru_input.append(context_pvresp)
+        gru_input.append(context_pvbspn)
+        # print(context_pvbspn.size())
+
+        #self.gru.flatten_parameters()
+        gru_out, dec_last_h = self.gru(torch.cat(gru_input, 2), dec_last_h)   # [B, 1, H], [n_layer, B, H]
+        # gru_out = self.dropout_layer(gru_out)
+        # print(gru_out.size())
+        return dec_last_h
+
+
+    def get_probs(self, inputs, hidden_states, dec_hs, first_turn=False):
+        Tdec = dec_hs.size(1)
+
+        raw_scores, word_onehot_input, input_idx_oov = [], [], []
+        raw_gen_score = self.Wgen(dec_hs)    #[B, Tdec, V]
+        raw_scores.append(raw_gen_score)
+
+        raw_cp_score_user = self.cp_user(hidden_states['user'], dec_hs)   #[B, Tdec,Tu]
+        raw_cp_score_user.masked_fill_(self.mask_user.repeat(1,Tdec,1), -1e20)
+        raw_scores.append(raw_cp_score_user)
+        word_onehot_input.append(inputs['user_onehot'])
+        input_idx_oov.append(inputs['user_nounk'])
+
+        if not first_turn:
+            raw_cp_score_pvresp = self.cp_pvresp(hidden_states['resp'], dec_hs)   #[B, Tdec,Tr]
+            raw_cp_score_pvresp.masked_fill_(self.mask_pvresp.repeat(1,Tdec,1), -1e20)
+            raw_scores.append(raw_cp_score_pvresp)
+            word_onehot_input.append(inputs['pv_resp_onehot'])
+            input_idx_oov.append(inputs['pv_resp_nounk'])
+
+            raw_cp_score_pvbspn = self.cp_pvbspn(hidden_states[self.bspn_mode], dec_hs)   #[B, Tdec, Tb]
+            raw_cp_score_pvbspn.masked_fill_(self.mask_pvbspn.repeat(1,Tdec,1), -1e20)
+            raw_scores.append(raw_cp_score_pvbspn)
+            word_onehot_input.append(inputs['pv_%s_onehot'%self.bspn_mode])
+            input_idx_oov.append(inputs['pv_%s_nounk'%self.bspn_mode])
+
+        # print('bspn:' , inputs['bspn'][0, 0:10])
+        probs = get_final_scores(raw_scores, word_onehot_input, input_idx_oov, self.vsize_oov)   # [B, V_oov]
+
+        return probs
 
 class ActSpanDecoder(nn.Module):
     def __init__(self, embedding, vocab_size_oov, Wgen = None, dropout=0.):
@@ -893,6 +1006,10 @@ class DAMD(nn.Module):
             self.bspn_decoder = BeliefSpanDecoder(self.embedding, self.vsize_oov, cfg.bspn_mode,
                                                                              Wgen = Wgen, dropout = self.dropout)
             self.decoders[cfg.bspn_mode] = self.bspn_decoder
+        if cfg.enable_cntfact:
+            self.cntfact_bspn_decoder = CntfactBeliefSpanDecoder(self.embedding, self.vsize_oov, cfg.bspn_mode,
+                                                                             Wgen = Wgen, dropout = self.dropout)
+            self.decoders[cfg.cntfact_bspn_mode] = self.cntfact_bspn_decoder
         if cfg.enable_aspn:
             self.aspn_decoder = ActSpanDecoder(self.embedding, self.vsize_oov,
                                                                           Wgen = Wgen, dropout = self.dropout)
@@ -901,7 +1018,7 @@ class DAMD(nn.Module):
                                                                        Wgen = Wgen, dropout = self.dropout)
         self.decoders['resp'] = self.resp_decoder
 
-        if cfg.enable_dst and cfg.bspn_mode == 'bsdx':
+        if cfg.enable_dst and cfg.bspn_mode == 'bsdx': # False #TODO: make change if cfg.enable_dst set to True
             self.dst_decoder = BeliefSpanDecoder(self.embedding, self.vsize_oov, 'bspn',
                                                                              Wgen = Wgen, dropout = self.dropout)
             self.decoders['bspn'] = self.dst_decoder
@@ -909,27 +1026,49 @@ class DAMD(nn.Module):
         self.nllloss = nn.NLLLoss(ignore_index=0)
         self.nllloss_kd = nn.NLLLoss(ignore_index=0,reduction='none')
 
-
-        self.go_idx = {'bspn': 3, 'bsdx': 3, 'aspn': 4, 'dspn': 9, 'resp': 1}
-        self.eos_idx = {'bspn': 7, 'bsdx': 7, 'aspn': 8, 'dspn': 10, 'resp': 6}
-        self.teacher_forcing_decode = {
-            'bspn': cfg.use_true_curr_bspn,
-            'bsdx': cfg.use_true_curr_bspn,
-            'aspn': cfg.use_true_curr_aspn,
-            'dspn': False,
-            'resp': False}
-        self.limited_vocab_decode = {
-            'bspn': cfg.limit_bspn_vocab,
-            'bsdx': cfg.limit_bspn_vocab,
-            'aspn': cfg.limit_aspn_vocab,
-            'dspn': False,
-            'resp': False}
+        if cfg.enable_cntfact:
+            self.go_idx = {'bspn': 3, 'bsdx': 3, 'cntfact_bspn': 3, 'cntfact_bsdx': 3, 'aspn': 4, 'dspn': 9, 'resp': 1}
+            self.eos_idx = {'bspn': 7, 'bsdx': 7, 'cntfact_bspn': 7, 'cntfact_bsdx': 7, 'aspn': 8, 'dspn': 10, 'resp': 6}
+            self.teacher_forcing_decode = {
+                'bspn': cfg.use_true_curr_bspn,
+                'bsdx': cfg.use_true_curr_bspn,
+                'aspn': cfg.use_true_curr_aspn,
+                'cntfact_bspn': cfg.use_true_curr_cntfact_bspn,
+                'cntfact_bsdx': cfg.use_true_curr_cntfact_bspn,
+                'dspn': False,
+                'resp': False}
+            self.limited_vocab_decode = {
+                'bspn': cfg.limit_bspn_vocab,
+                'bsdx': cfg.limit_bspn_vocab,
+                'cntfact_bspn': cfg.limit_bspn_vocab,
+                'cntfact_bsdx': cfg.limit_bspn_vocab,
+                'aspn': cfg.limit_aspn_vocab,
+                'dspn': False,
+                'resp': False}
+        else:
+            self.go_idx = {'bspn': 3, 'bsdx': 3, 'aspn': 4, 'dspn': 9, 'resp': 1}
+            self.eos_idx = {'bspn': 7, 'bsdx': 7, 'aspn': 8, 'dspn': 10, 'resp': 6}
+            self.teacher_forcing_decode = {
+                'bspn': cfg.use_true_curr_bspn,
+                'bsdx': cfg.use_true_curr_bspn,
+                'aspn': cfg.use_true_curr_aspn,
+                'dspn': False,
+                'resp': False}
+            self.limited_vocab_decode = {
+                'bspn': cfg.limit_bspn_vocab,
+                'bsdx': cfg.limit_bspn_vocab,
+                'aspn': cfg.limit_aspn_vocab,
+                'dspn': False,
+                'resp': False}
 
     def supervised_loss(self, inputs, probs):
         def LabelSmoothingNLLLoss(logprob, labels):
                 return -(labels * logprob).sum((1,2)).mean()
         total_loss = 0
-        losses = {'bsdx':0, 'bspn':0, 'aspn':0, 'resp':0, 'dspn':0}
+        if cfg.enable_cntfact:
+            losses = {'bsdx':0, 'bspn':0, 'aspn':0, 'resp':0, 'dspn':0, 'cntfact_bsdx':0, 'cntfact_bspn':0}
+        else:
+            losses = {'bsdx':0, 'bspn':0, 'aspn':0, 'resp':0, 'dspn':0}
         for name, prob in probs.items():
             if name == 'aspn_aug':
                 continue
@@ -1142,7 +1281,7 @@ class DAMD(nn.Module):
 
         probs = {}
 
-        if cfg.enable_dspn:
+        if cfg.enable_dspn: # false
             dspn_enc, _ = self.span_encoder(inputs['pv_dspn'])
             hidden_states['dspn'] = dspn_enc
             hidden_states, probs = train_decode('dspn', usdx_enc_last_h, hidden_states, probs)
@@ -1179,7 +1318,7 @@ class DAMD(nn.Module):
                     _, ps = train_decode('aspn', usdx_enc_last_h, hidden_states, None, bidx=bidx_batch)
                     probs['aspn_aug'].append(ps)
 
-        return probs
+        return probs # dict ['bsdx', 'aspn', 'resp']
 
     def back_up_values(self, dict_, name_is_idx_dict):
         for name,is_idx in name_is_idx_dict.items():
