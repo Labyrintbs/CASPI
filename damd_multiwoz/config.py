@@ -80,7 +80,7 @@ class _Config:
         self.use_true_prev_bspn = False
         self.use_true_prev_aspn = False
         self.use_true_prev_dspn = False
-        self.use_true_curr_bspn = False
+        self.use_true_curr_bspn = True
         self.use_true_curr_aspn = False
         self.use_true_bspn_for_ctr_eval = False
         self.use_true_domain_for_ctr_eval = False
@@ -100,12 +100,12 @@ class _Config:
 
         # counter_fact experiment settings
         self.enable_cntfact = False
-        self.cntfact_bspn_mode = 'cntfact_bspn'
+        self.cntfact_bspn_mode = 'cntfact_bsdx'
         self.use_true_curr_cntfact_bspn = False
         self.skip_preprocess = True # jump redump of domain_db.json to domain_db_processed.json
         self.preprocess_model_path = '../../all-MiniLM-L6-v2/'
         self.topk_cntfact = 5
-        self.cntfact_max_mode = False # replace belief state with one topk counterfact item's
+        self.cntfact_max_mode = True # replace belief state with one topk counterfact item's
         self.cntfact_max_save_path = 'data/multi-woz-processed/cntfact_data_for_damd_ratio_0.1.json'
         self.cntfact_raio = 0.1
 

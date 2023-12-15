@@ -335,7 +335,7 @@ class MultiWozReader(_ReaderBase):
             enc['bsdx'] = self.vocab.sentence_encode(t['cons_delex'].split() + ['<eos_b>'])
             enc['aspn'] = self.vocab.sentence_encode(t['sys_act'].split() + ['<eos_a>'])
             enc['dspn'] = self.vocab.sentence_encode(t['turn_domain'].split() + ['<eos_d>'])
-            if cfg.cntfact_max_mode:
+            if cfg.enable_cntfact:
                 enc['cntfact_bspn'] = self.vocab.sentence_encode(t['cntfact_constraint_max'].split() + ['<eos_b>'])
                 enc['cntfact_bsdx'] = self.vocab.sentence_encode(t['cntfact_cons_delex_max'].split() + ['<eos_b>'])
             
@@ -499,7 +499,7 @@ class MultiWozReader(_ReaderBase):
                     inputs[item+'_unk_np'][inputs[item+'_unk_np']>=self.vocab_size] = 2   # set word index > vocab size to <unk>
                 else:
                     inputs[item+'_unk_np'] = inputs[item+'_np']
-        if cfg.cntfact_max_mode:
+        if cfg.enable_cntfact:
             inputs_keys = ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn', 'cntfact_bspn', 'cntfact_bsdx']
         else:
             inputs_keys = ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn'] 
@@ -575,9 +575,12 @@ class MultiWozReader(_ReaderBase):
         if cfg.bspn_mode == 'bspn':
             field = ['dial_id', 'turn_num', 'user', 'bspn_gen','bspn', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
                         'dspn_gen', 'dspn', 'pointer']
-        elif not cfg.enable_dst:
+        elif not cfg.enable_dst and not cfg.enable_cntfact: 
             field = ['dial_id', 'turn_num', 'user', 'bsdx_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
                         'dspn_gen', 'dspn', 'bspn', 'pointer']
+        elif not cfg.enable_dst and cfg.enable_cntfact: 
+            field = ['dial_id', 'turn_num', 'user', 'bsdx_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
+                        'dspn_gen', 'dspn', 'bspn', 'pointer', 'cntfact_bspn', 'cntfact_bsdx'] 
         else:
             field = ['dial_id', 'turn_num', 'user', 'bsdx_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
                         'dspn_gen', 'dspn', 'bspn_gen','bspn', 'pointer']

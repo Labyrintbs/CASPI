@@ -11,7 +11,9 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-data_file=data_for_damd_reward_${K}.json
+ratio=0.1
+#data_file=data_for_damd_reward_${K}.json
+data_file=cntfact_data_for_damd_ratio_0.1.json
 
 if [ $metric == 'soft' ]; then
   soft_acc=True
@@ -24,13 +26,14 @@ enable_aspn=True
 bspn_mode=bsdx
 enable_dst=False
 use_true_curr_bspn=True
+enable_cntfact=True
 
 root_path=./damd_multiwoz
 
-per_epoch_report_path=${root_path}/data/multi-woz-oppe/reward/reward_report_${K}_${metric}_${fold}_dp.csv
+per_epoch_report_path=${root_path}/data/multi-woz-oppe/reward/cntfact_reward_report_${K}_${metric}_${fold}_ratio_${ratio}_dp.csv
 dev_list=${root_path}/data/multi-woz-processed/rewardListFile_${K}_${fold}.json
 
-exp_name=with_bs_reward_K_${K}_fold_${fold}_metric_${metric}_seed_${seed}
+exp_name=cntfact_reward_K_${K}_fold_${fold}_metric_${metric}_seed_${seed}_CntfactRatio_${ratio}
 
 log_file=${exp_name}.log
 log_path=${root_path}/logs/${log_file}
@@ -47,5 +50,6 @@ python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
 	gen_per_epoch_report=${gen_per_epoch_report} \
 	per_epoch_report_path=${per_epoch_report_path} \
 	dev_list=${dev_list} \
-	soft_acc=${soft_acc}
+	soft_acc=${soft_acc} \
+	enable_cntfact=${enable_cntfact}
 

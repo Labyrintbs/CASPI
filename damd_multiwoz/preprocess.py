@@ -517,7 +517,7 @@ class DataPreprocessor(object):
             single_turn = {}
             constraint_dict = OrderedDict()
             prev_constraint_dict = {} # origin code's sentinal
-            if cfg.cntfact_max_mode:
+            if cfg.enable_cntfact:
                 prev_cntfact_constraint_dict = OrderedDict() # initialize prev_cntfact_constraint_dict
             prev_turn_domain = ['general']
             ordered_sysact_dict[fn] = {}
@@ -707,7 +707,7 @@ class DataPreprocessor(object):
                     single_turn['match'] = str(match)
                     single_turn['constraint'] = ' '.join(constraints)
                     single_turn['cons_delex'] = ' '.join(cons_delex)
-                    if cfg.cntfact_max_mode:
+                    if cfg.enable_cntfact and cfg.cntfact_max_mode:
                         single_turn['cntfact_constraint_max'] = ' '.join(cntfact_constraints)
                         single_turn['cntfact_cons_delex_max'] = ' '.join(cntfact_cons_delex)
                     single_turn['sys_act'] = ' '.join(sys_act)
@@ -762,7 +762,7 @@ class DataPreprocessor(object):
             # if count == 20:
             #    break
         if not cfg.cntfact_max_mode:
-            self.vocab.construct()
+            self.vocab.construct() # may omit cntfact vocab not include in ori vocab set
             self.vocab.save_vocab('data/multi-woz-processed/vocab')
             with open('data/multi-woz-analysis/dialog_acts.json', 'w') as f:
                 json.dump(ordered_sysact_dict, f, indent=2)

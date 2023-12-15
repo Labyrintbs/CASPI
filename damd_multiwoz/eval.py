@@ -5,6 +5,7 @@ from nltk.util import ngrams
 import ontology
 from config import global_config as cfg
 from clean_dataset import clean_slot_values
+import pdb
 
 
 class BLEUScorer(object):
@@ -138,7 +139,7 @@ class MultiWozEvaluator(object):
                     dialog_datas[dial_id] = []
                 dialog_datas[dial_id].append(row)
             for dial_id, dialog_data in dialog_datas.items():
-                all_dialogid_bleus[dial_id]=self.bleu_metric(dialog_data)
+                all_dialogid_bleus[dial_id]=self.bleu_metric(dialog_data) # each dial's bleu
         accu_single_dom, accu_multi_dom, multi_dom_num = self.domain_eval(data)
         context_to_eval_response  = self.context_to_response_eval(data,
                                                                   same_eval_as_cambridge=cfg.same_eval_as_cambridge,return_extra=return_rich,
@@ -158,6 +159,8 @@ class MultiWozEvaluator(object):
             return bleu, success, match
 
     def _get_metric_results(self, data, domain='all', file_list=None, eval_act=True):
+        #TODO: 2023.12.14 impact of bspn here
+        #pdb.set_trace()
         metric_result = {'domain': domain}
         bleu = self.bleu_metric(data, file_list)
         if cfg.bspn_mode == 'bspn' or cfg.enable_dst:
@@ -513,8 +516,10 @@ class MultiWozEvaluator(object):
 
     def context_to_response_eval(self, data, eval_dial_list = None, same_eval_as_cambridge=False,return_extra=False,return_for_each_dialogue=False,soft_acc=False):
         dials = self.pack_dial(data)
+        # data format: ['dial_id', 'turn_num', 'user', 'bsdx_gen', 'bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn', 'dspn_gen', 'dspn', 'bspn', 'pointer']
+        # defined in field, MultiWozReader.wrap_result
         counts = {}
-        for req in self.requestables:
+        for req in self.requestables: # ['phone', 'address', 'postcode', 'reference', 'id']
             counts[req+'_total'] = 0
             counts[req+'_offer'] = 0
 
@@ -532,7 +537,7 @@ class MultiWozEvaluator(object):
             dial = dials[dial_id]
             reqs = {}
             goal = {}
-            for domain in ontology.all_domains:
+            for domain in ontology.all_domains: # ['restaurant', 'hotel', 'attraction', 'train', 'taxi', 'police', 'hospital']
                 if self.all_data[dial_id]['goal'].get(domain):
                     true_goal = self.all_data[dial_id]['goal']
                     goal = self._parseGoal(goal, true_goal, domain)
@@ -541,6 +546,7 @@ class MultiWozEvaluator(object):
                 reqs[domain] = goal[domain]['requestable']
 
             # print('\n',dial_id)
+            #pdb.set_trace()
             evaluated_generated_dialogue = self._evaluateGeneratedDialogue(dial, goal, reqs, counts,
                                                                     same_eval_as_cambridge=same_eval_as_cambridge,return_extra=return_extra, soft_acc=soft_acc)
             success_true = 0
@@ -617,7 +623,7 @@ class MultiWozEvaluator(object):
                         if cfg.use_true_domain_for_ctr_eval:
                             dom_pred = [d[1:-1] for d in turn['dspn'].split()]
                         else:
-                            dom_pred = [d[1:-1] for d in turn['dspn_gen'].split()]
+                            dom_pred = [d[1:-1] for d in turn['dspn_gen'].split()] # TODO: where does dspn_gen come from?
                         # else:
                         #     raise NotImplementedError('Just use true domain label')
                         if domain not in dom_pred:  # fail
@@ -626,15 +632,15 @@ class MultiWozEvaluator(object):
                     if domain in ['restaurant', 'hotel', 'attraction', 'train']:
                         # HERE YOU CAN PUT YOUR BELIEF STATE ESTIMATION
                         if cfg.enable_bspn and not cfg.use_true_bspn_for_ctr_eval and \
-                            (cfg.bspn_mode == 'bspn' or cfg.enable_dst):
-                            bspn = turn['bspn_gen']
+                            (cfg.bspn_mode == 'bspn' or cfg.enable_dst): # False
+                            bspn = turn['bspn_gen'] #TODO: verify if problem here for evaluation
                         else:
                             bspn = turn['bspn']
                         # bspn = turn['bspn']
 
                         constraint_dict = self.reader.bspan_to_constraint_dict(bspn)
                         if constraint_dict.get(domain):
-                            venues = self.reader.db.queryJsons(domain, constraint_dict[domain], return_name=True)
+                            venues = self.reader.db.queryJsons(domain, constraint_dict[domain], return_name=True) # based on constraint_dict to do query
                         else:
                             venues = []
 
@@ -772,7 +778,7 @@ class MultiWozEvaluator(object):
                     success = 0
             
         #------------------Used only during reward leaning (starts) -----------------------#            
-        # SUCCESS Without match compute--------------------|
+        # SUCCESS Without match compute--------------------| TODO: add reward here
         success_true = 0
         for domain in domains_in_goal:
             domain_success = 0

@@ -344,7 +344,7 @@ class MultiWozReader(_ReaderBase):
         update_bspn += f" <eos_b>"
         return update_bspn
 
-    def bspan_to_constraint_dict(self, bspan, bspn_mode = 'bspn'):
+    def bspan_to_constraint_dict(self, bspan, bspn_mode = 'bspn'): #TODO : verify functionality here
         # add decoded(str) here
         bspan = bspan.split() if isinstance(bspan, str) else bspan
         constraint_dict = {}

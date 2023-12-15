@@ -52,7 +52,7 @@ class Model(object):
         need_onehot = ['user', 'usdx', 'bspn', 'aspn', 'pv_resp', 'pv_bspn', 'pv_aspn',
                                    'dspn', 'pv_dspn', 'bsdx', 'pv_bsdx', 'cntfact_bspn', 'pv_cntfact_bspn', 'cntfact_bsdx', 'pv_cntfact_bsdx']
         inputs['db'] = cuda_(torch.from_numpy(inputs['db_np']).float())
-        if cfg.cntfact_max_mode:
+        if cfg.enable_cntfact:
             input_keys = ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn', 'cntfact_bspn', 'cntfact_bsdx']
         else:
             input_keys = ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn']
@@ -123,7 +123,6 @@ class Model(object):
         else:
             return
         new_labels = np.copy(raw_labels)
-        #pdb.set_trace()
         if copy_sources:
             bidx, tidx = np.where(raw_labels>=self.reader.vocab_size)
             copy_sources = np.concatenate(copy_sources, axis=1)
@@ -153,7 +152,7 @@ class Model(object):
             data_iterator = self.reader.get_batches('train')
             for iter_num, dial_batch in enumerate(data_iterator):
                 hidden_states = {}
-                if cfg.cntfact_max_mode:
+                if cfg.enable_cntfact:
                     py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None, 'pv_cntfact_bspn': None, 'pv_cntfact_bsdx': None}
                 else:
                     py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None}
@@ -194,7 +193,7 @@ class Model(object):
                         py_prev['pv_aspn'] = turn_batch['aspn']
                     if cfg.enable_dspn:
                         py_prev['pv_dspn'] = turn_batch['dspn']
-                    if cfg.cntfact_max_mode:
+                    if cfg.enable_cntfact:
                         py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx']
                         py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn']
 
@@ -211,13 +210,23 @@ class Model(object):
                     torch.cuda.empty_cache()
 
                 if (iter_num+1)%cfg.report_interval==0:
-                    logging.info(
-                            'iter:{} [total|bspn|aspn|resp] loss: {:.2f} {:.2f} {:.2f} {:.2f} grad:{:.2f} time: {:.1f} turn:{} '.format(iter_num+1,
-                                                                           float(total_loss),
-                                                                           float(losses[cfg.bspn_mode]),float(losses['aspn']),float(losses['resp']),
-                                                                           grad,
-                                                                           time.time()-btm,
-                                                                           turn_num+1))
+                    if cfg.enable_cntfact:
+                        logging.info(
+                                    'iter:{} [total|cntfact_bspn|bspn|aspn|resp] loss: {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} grad:{:.2f} time: {:.1f} turn:{} '.format(iter_num+1,
+                                                                            float(total_loss),
+                                                                            float(losses[cfg.cntfact_bspn_mode]), float(losses[cfg.bspn_mode]), float(losses['aspn']),float(losses['resp']),
+                                                                            grad,
+                                                                            time.time()-btm,
+                                                                            turn_num+1))
+
+                    else:
+                        logging.info(
+                                'iter:{} [total|bspn|aspn|resp] loss: {:.2f} {:.2f} {:.2f} {:.2f} grad:{:.2f} time: {:.1f} turn:{} '.format(iter_num+1,
+                                                                            float(total_loss),
+                                                                            float(losses[cfg.bspn_mode]),float(losses['aspn']),float(losses['resp']),
+                                                                            grad,
+                                                                            time.time()-btm,
+                                                                            turn_num+1))
                     if cfg.enable_dst and cfg.bspn_mode == 'bsdx':
                         logging.info('bspn-dst:{:.3f}'.format(float(losses['bspn'])))
                     if cfg.multi_acts_training:
@@ -274,7 +283,7 @@ class Model(object):
         result_collection = {}
         for batch_num, dial_batch in enumerate(data_iterator):
             hidden_states = {}
-            if cfg.cntfact_max_mode:
+            if cfg.enable_cntfact:
                 py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None, 'pv_cntfact_bspn': None, 'pv_cntfact_bsdx': None}
             else:
                 py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None}
@@ -293,10 +302,9 @@ class Model(object):
                         py_prev['pv_aspn'] = turn_batch['aspn']
                     if cfg.enable_dspn:
                         py_prev['pv_dspn'] = turn_batch['dspn']
-                    if cfg.cntfact_max_mode:
+                    if cfg.enable_cntfact:
                         py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx']
                         py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn']
-                    #TODO: add cntfact loss here
 
                     if cfg.valid_loss == 'total_loss':
                         valid_loss += float(total_loss)
@@ -310,15 +318,19 @@ class Model(object):
                         raise ValueError('Invalid validation loss type!')
                 else:
                     decoded = self.m(inputs, hidden_states, first_turn, mode='test')
+                    #pdb.set_trace()
                     turn_batch['resp_gen'] = decoded['resp']
-                    if cfg.bspn_mode == 'bspn' or cfg.enable_dst:
+                    if cfg.bspn_mode == 'bspn' or cfg.enable_dst: #False
                         turn_batch['bspn_gen'] = decoded['bspn']
                     if cfg.enable_aspn:
                         turn_batch['aspn_gen'] = decoded['aspn']
                     py_prev['pv_resp'] = turn_batch['resp'] if cfg.use_true_pv_resp else decoded['resp']
-                    if cfg.enable_bspn:
-                        py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode]
-                        py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
+                    if cfg.enable_bspn and not cfg.enable_cntfact:
+                        py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode] # py_prev['pv_bsdx'] = turn_batch['bsdx']
+                        py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn'] # True
+                    if cfg.enable_cntfact:
+                        py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx'] if cfg.use_true_prev_bspn or 'cntfact_bsdx' not in decoded else decoded['cntfact_bsdx']
+                        py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn else decoded['cntfact_bsdx']
                     if cfg.enable_aspn:
                         py_prev['pv_aspn'] = turn_batch['aspn'] if cfg.use_true_prev_aspn else decoded['aspn']
                     if cfg.enable_dspn:
@@ -333,9 +345,10 @@ class Model(object):
         if cfg.valid_loss not in ['score', 'match', 'success', 'bleu']:
             valid_loss /= (count + 1e-8)
         else:
-            results, _ = self.reader.wrap_result(result_collection)
+            results, _ = self.reader.wrap_result(result_collection) # ['dial_id', 'turn_num', 'user', 'bsdx_gen', 'bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn', 'dspn_gen', 'dspn', 'bspn', 'pointer']
             rollouts = {}
             for row in results:
+                # turn each turn list into each dial list
                 if row['dial_id'] not in rollouts:
                     rollouts[row['dial_id']]={}
                 rollout = rollouts[row['dial_id']]
@@ -346,6 +359,7 @@ class Model(object):
                 rollout_step['resp_gen'] = row['resp_gen']
                 rollout_step['aspn'] = row['aspn']
                 
+                #TODO: add cntfact here, which restored in reward_report.csv
                 if 'bspn' in row:
                     rollout_step['bspn'] = row['bspn']
                 if 'bspn_gen' in row:
@@ -355,6 +369,7 @@ class Model(object):
 
                     
             if other_config['gen_per_epoch_report']==True:
+                #pdb.set_trace()
                 bleu, success, match,req_offer_counts,stats,all_true_reqs,all_pred_reqs, success_true, all_successes, all_matches, all_bleus ,dial_ids = self.evaluator.validation_metric(results, return_rich=True, return_per_dialog=True,soft_acc=other_config['soft_acc'])
                 for i,dial_id in enumerate(dial_ids):
                     self.df.loc[len(self.df)] = [dial_id,all_successes[i],all_matches[i],all_bleus[i],json.dumps(rollouts[dial_id])]
@@ -381,7 +396,10 @@ class Model(object):
             # if batch_num > 0:
             #     continue
             hidden_states = {}
-            py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx':None}
+            if cfg.enable_cntfact:
+                py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None, 'pv_cntfact_bspn': None, 'pv_cntfact_bsdx': None}
+            else:
+                py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None}
             print('batch_size:', len(dial_batch[0]['resp']))
             for turn_num, turn_batch in enumerate(dial_batch):
                 # print('turn %d'%turn_num)
@@ -392,9 +410,13 @@ class Model(object):
                 inputs = self.add_torch_input(inputs, first_turn=first_turn)
                 decoded = self.m(inputs, hidden_states, first_turn, mode='test')
                 #print(decoded)
+                #pdb.set_trace()
                 turn_batch['resp_gen'] = decoded['resp']
-                if cfg.bspn_mode == 'bsdx':
-                    turn_batch['bsdx_gen'] = decoded['bsdx'] if cfg.enable_bspn else [[0]] * len(decoded['resp'])
+                #if cfg.bspn_mode == 'bsdx':
+                if cfg.bspn_mode == 'bsdx' and not cfg.enable_cntfact:
+                    turn_batch['bsdx_gen'] = decoded['bsdx'] if cfg.enable_bspn else [[0]] * len(decoded['resp']) #TODO: verify the effect of bsdx, bspn here.
+                if cfg.enable_cntfact:
+                    turn_batch['bsdx_gen'] = decoded['cntfact_bsdx'] if cfg.enable_bspn else [[0]] * len(decoded['resp']) #TODO: verify the effect of bsdx, bspn here.
                 if cfg.bspn_mode == 'bspn' or cfg.enable_dst:
                     turn_batch['bspn_gen'] = decoded['bspn'] if cfg.enable_bspn else [[0]] * len(decoded['resp'])
                 turn_batch['aspn_gen'] = decoded['aspn'] if cfg.enable_aspn else [[0]] * len(decoded['resp'])
@@ -414,9 +436,12 @@ class Model(object):
                 #         print('aspn:', self.reader.vocab.sentence_decode(decoded['aspn'][i][b] , eos='<eos_a>', indicate_oov=True))
 
                 py_prev['pv_resp'] = turn_batch['resp'] if cfg.use_true_pv_resp else decoded['resp']
-                if cfg.enable_bspn:
+                if cfg.enable_bspn and not cfg.enable_cntfact:
                     py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode]
                     py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
+                if cfg.enable_cntfact:
+                        py_prev['pv_'+cfg.cntfact_bspn_mode] = turn_batch[cfg.cntfact_bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.cntfact_bspn_mode]
+                        py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
                 if cfg.enable_aspn:
                     py_prev['pv_aspn'] = turn_batch['aspn'] if cfg.use_true_prev_aspn else decoded['aspn']
                 if cfg.enable_dspn:
@@ -432,6 +457,7 @@ class Model(object):
             self.reader.record_utterance(result_collection)
             quit()
         
+        #pdb.set_trace()
         results, field = self.reader.wrap_result(result_collection)
         #print(results)
         self.reader.save_result('w', results, field)

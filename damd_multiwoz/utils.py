@@ -3,6 +3,7 @@ import json
 import numpy as np
 from collections import OrderedDict
 import ontology
+import pdb
 
 def py2np(list):
     return np.array(list)
@@ -91,7 +92,10 @@ class Vocab(object):
     def encode(self, word, include_oov=True):
         if include_oov:
             if self._word2idx.get(word, None) is None:
-                raise ValueError('Unknown word: %s. Vocabulary should include oovs here.'%word)
+                self._add_to_vocab(word)
+                self.vocab_size_oov = len(self._idx2word)
+                logging.info(ValueError('Unknown word: %s. Vocabulary should include oovs here.'%word))
+                #raise ValueError('Unknown word: %s. Vocabulary should include oovs here.'%word)
             return self._word2idx[word]
         else:
             word = '<unk>' if word not in self._word2idx else word
@@ -116,12 +120,12 @@ class Vocab(object):
             return self._idx2word[idx]+'(o)'
 
     def sentence_decode(self, index_list, eos=None, indicate_oov=False):
-        l = [self.decode(_, indicate_oov) for _ in index_list]
+        l = [self.decode(_, indicate_oov) for _ in index_list] # ['hi', '.', 'can', 'you', 'help', 'me', 'find', 'an', 'east', 'hotel', '?', '<eos_u>']
         if not eos or eos not in l:
             return ' '.join(l)
         else:
             idx = l.index(eos)
-            return ' '.join(l[:idx])
+            return ' '.join(l[:idx]) # 'hi . can you... east hotel ?'
 
     def nl_decode(self, l, eos=None):
         return [self.sentence_decode(_, eos) + '\n' for _ in l]
