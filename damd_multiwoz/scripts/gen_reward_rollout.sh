@@ -11,9 +11,9 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-ratio=0.1
+ratio=1
 #data_file=data_for_damd_reward_${K}.json
-data_file=cntfact_data_for_damd_ratio_0.1.json
+data_file=cntfact_data_for_damd_ratio_1.json
 
 if [ $metric == 'soft' ]; then
   soft_acc=True
@@ -23,17 +23,17 @@ fi
 
 gen_per_epoch_report=True
 enable_aspn=True
-bspn_mode=bsdx
+bspn_mode=bspn
 enable_dst=False
 use_true_curr_bspn=True
 enable_cntfact=True
 
 root_path=./damd_multiwoz
 
-per_epoch_report_path=${root_path}/data/multi-woz-oppe/reward/cntfact_reward_report_${K}_${metric}_${fold}_ratio_${ratio}_dp.csv
+per_epoch_report_path=${root_path}/data/multi-woz-oppe/reward/bspn_cntfact_reward_report_${K}_${metric}_${fold}_ratio_${ratio}_dp.csv
 dev_list=${root_path}/data/multi-woz-processed/rewardListFile_${K}_${fold}.json
 
-exp_name=cntfact_reward_K_${K}_fold_${fold}_metric_${metric}_seed_${seed}_CntfactRatio_${ratio}
+exp_name=bspn_cntfact_reward_K_${K}_fold_${fold}_metric_${metric}_seed_${seed}_CntfactRatio_${ratio}
 
 log_file=${exp_name}.log
 log_path=${root_path}/logs/${log_file}

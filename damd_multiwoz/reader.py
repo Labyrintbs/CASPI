@@ -298,6 +298,7 @@ class MultiWozReader(_ReaderBase):
 
     def _load_data(self, save_temp=False):
         self.data = json.loads(open(cfg.data_path+cfg.data_file, 'r', encoding='utf-8').read().lower())
+        print(f'Data file path: {cfg.data_path+cfg.data_file}')
         self.train, self.dev, self.test = [] , [], []
 
         # data_fraction = 0.05
@@ -578,8 +579,11 @@ class MultiWozReader(_ReaderBase):
         elif not cfg.enable_dst and not cfg.enable_cntfact: 
             field = ['dial_id', 'turn_num', 'user', 'bsdx_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
                         'dspn_gen', 'dspn', 'bspn', 'pointer']
-        elif not cfg.enable_dst and cfg.enable_cntfact: 
+        elif not cfg.enable_dst and cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bsdx': 
             field = ['dial_id', 'turn_num', 'user', 'bsdx_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
+                        'dspn_gen', 'dspn', 'bspn', 'pointer', 'cntfact_bspn', 'cntfact_bsdx'] 
+        elif not cfg.enable_dst and cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn':
+            field = ['dial_id', 'turn_num', 'user', 'bspn_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
                         'dspn_gen', 'dspn', 'bspn', 'pointer', 'cntfact_bspn', 'cntfact_bsdx'] 
         else:
             field = ['dial_id', 'turn_num', 'user', 'bsdx_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',

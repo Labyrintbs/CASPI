@@ -321,7 +321,10 @@ class Model(object):
                     #pdb.set_trace()
                     turn_batch['resp_gen'] = decoded['resp']
                     if cfg.bspn_mode == 'bspn' or cfg.enable_dst: #False
-                        turn_batch['bspn_gen'] = decoded['bspn']
+                        if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn':
+                            turn_batch['bspn_gen'] = decoded['cntfact_bspn']#decoded['bspn']
+                        else:
+                            turn_batch['bspn_gen'] = decoded['bspn']
                     if cfg.enable_aspn:
                         turn_batch['aspn_gen'] = decoded['aspn']
                     py_prev['pv_resp'] = turn_batch['resp'] if cfg.use_true_pv_resp else decoded['resp']
@@ -329,8 +332,8 @@ class Model(object):
                         py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode] # py_prev['pv_bsdx'] = turn_batch['bsdx']
                         py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn'] # True
                     if cfg.enable_cntfact:
-                        py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx'] if cfg.use_true_prev_bspn or 'cntfact_bsdx' not in decoded else decoded['cntfact_bsdx']
-                        py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn else decoded['cntfact_bsdx']
+                        py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx'] if cfg.use_true_prev_bspn or 'cntfact_bsdx' not in decoded else decoded['cntfact_bsdx'] 
+                        py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
                     if cfg.enable_aspn:
                         py_prev['pv_aspn'] = turn_batch['aspn'] if cfg.use_true_prev_aspn else decoded['aspn']
                     if cfg.enable_dspn:
@@ -415,10 +418,13 @@ class Model(object):
                 #if cfg.bspn_mode == 'bsdx':
                 if cfg.bspn_mode == 'bsdx' and not cfg.enable_cntfact:
                     turn_batch['bsdx_gen'] = decoded['bsdx'] if cfg.enable_bspn else [[0]] * len(decoded['resp']) #TODO: verify the effect of bsdx, bspn here.
-                if cfg.enable_cntfact:
+                if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bsdx':
                     turn_batch['bsdx_gen'] = decoded['cntfact_bsdx'] if cfg.enable_bspn else [[0]] * len(decoded['resp']) #TODO: verify the effect of bsdx, bspn here.
                 if cfg.bspn_mode == 'bspn' or cfg.enable_dst:
-                    turn_batch['bspn_gen'] = decoded['bspn'] if cfg.enable_bspn else [[0]] * len(decoded['resp'])
+                    if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn':
+                        turn_batch['bspn_gen'] = decoded['cntfact_bspn'] if cfg.enable_bspn else [[0]] * len(decoded['resp'])
+                    else:
+                        turn_batch['bspn_gen'] = decoded['bspn'] if cfg.enable_bspn else [[0]] * len(decoded['resp'])
                 turn_batch['aspn_gen'] = decoded['aspn'] if cfg.enable_aspn else [[0]] * len(decoded['resp'])
                 turn_batch['dspn_gen'] = decoded['dspn'] if cfg.enable_dspn else [[0]] * len(decoded['resp'])
 
@@ -450,7 +456,8 @@ class Model(object):
                 # prev_z = turn_batch['bspan']
             # print('test iter %d'%(batch_num+1))
             # print(dial_batch)
-            result_collection.update(self.reader.inverse_transpose_batch(dial_batch))
+            result_collection.update(self.reader.inverse_transpose_batch(dial_batch)) # ['dial_id', 'user', 'usdx', 'resp', 'bspn', 'bsdx', 'aspn', 'dspn', 'cntfact_bspn', 'cntfact_bsdx', 'pointer', 'input_pointer', 'turn_domain', 'turn_num', 'resp_gen', 'bspn_gen', 'aspn_gen', 'dspn_gen']
+            #pdb.set_trace()
 
         # self.reader.result_file.close()
         if cfg.record_mode:
