@@ -211,13 +211,23 @@ class Model(object):
 
                 if (iter_num+1)%cfg.report_interval==0:
                     if cfg.enable_cntfact:
-                        logging.info(
+                        if cfg.enable_contrast:
+                            logging.info(
+                                    'iter:{} [total|cntfact_bspn|bspn|aspn|resp|contrast] loss: {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} grad:{:.2f} time: {:.1f} turn:{} '.format(iter_num+1,
+                                                                            float(total_loss),
+                                                                            float(losses[cfg.cntfact_bspn_mode]), float(losses[cfg.bspn_mode]), float(losses['aspn']),float(losses['resp']),float(losses['contrast']),
+                                                                            grad,
+                                                                            time.time()-btm,
+                                                                            turn_num+1))
+                        else:
+                            logging.info(
                                     'iter:{} [total|cntfact_bspn|bspn|aspn|resp] loss: {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} grad:{:.2f} time: {:.1f} turn:{} '.format(iter_num+1,
                                                                             float(total_loss),
                                                                             float(losses[cfg.cntfact_bspn_mode]), float(losses[cfg.bspn_mode]), float(losses['aspn']),float(losses['resp']),
                                                                             grad,
                                                                             time.time()-btm,
                                                                             turn_num+1))
+
 
                     else:
                         logging.info(
@@ -302,7 +312,7 @@ class Model(object):
                         py_prev['pv_aspn'] = turn_batch['aspn']
                     if cfg.enable_dspn:
                         py_prev['pv_dspn'] = turn_batch['dspn']
-                    if cfg.enable_cntfact:
+                    if cfg.enable_cntfact and not cfg.enable_contrast:
                         py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx']
                         py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn']
 
@@ -321,7 +331,7 @@ class Model(object):
                     #pdb.set_trace()
                     turn_batch['resp_gen'] = decoded['resp']
                     if cfg.bspn_mode == 'bspn' or cfg.enable_dst: #False
-                        if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn':
+                        if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn' and not cfg.enable_contrast:
                             turn_batch['bspn_gen'] = decoded['cntfact_bspn']#decoded['bspn']
                         else:
                             turn_batch['bspn_gen'] = decoded['bspn']
@@ -332,8 +342,12 @@ class Model(object):
                         py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode] # py_prev['pv_bsdx'] = turn_batch['bsdx']
                         py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn'] # True
                     if cfg.enable_cntfact:
-                        py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx'] if cfg.use_true_prev_bspn or 'cntfact_bsdx' not in decoded else decoded['cntfact_bsdx'] 
-                        py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
+                        if cfg.enable_contrast:
+                            py_prev['pv_bsdx'] = turn_batch['bsdx'] if cfg.use_true_prev_bspn or 'bsdx' not in decoded else decoded['bsdx'] 
+                            py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
+                        else:
+                            py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx'] if cfg.use_true_prev_bspn or 'cntfact_bsdx' not in decoded else decoded['cntfact_bsdx'] 
+                            py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
                     if cfg.enable_aspn:
                         py_prev['pv_aspn'] = turn_batch['aspn'] if cfg.use_true_prev_aspn else decoded['aspn']
                     if cfg.enable_dspn:
@@ -418,10 +432,10 @@ class Model(object):
                 #if cfg.bspn_mode == 'bsdx':
                 if cfg.bspn_mode == 'bsdx' and not cfg.enable_cntfact:
                     turn_batch['bsdx_gen'] = decoded['bsdx'] if cfg.enable_bspn else [[0]] * len(decoded['resp']) #TODO: verify the effect of bsdx, bspn here.
-                if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bsdx':
+                if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bsdx' and not cfg.enable_contrast:
                     turn_batch['bsdx_gen'] = decoded['cntfact_bsdx'] if cfg.enable_bspn else [[0]] * len(decoded['resp']) #TODO: verify the effect of bsdx, bspn here.
                 if cfg.bspn_mode == 'bspn' or cfg.enable_dst:
-                    if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn':
+                    if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn' and not cfg.enable_contrast:
                         turn_batch['bspn_gen'] = decoded['cntfact_bspn'] if cfg.enable_bspn else [[0]] * len(decoded['resp'])
                     else:
                         turn_batch['bspn_gen'] = decoded['bspn'] if cfg.enable_bspn else [[0]] * len(decoded['resp'])
@@ -446,6 +460,10 @@ class Model(object):
                     py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode]
                     py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
                 if cfg.enable_cntfact:
+                    if cfg.enable_contrast:
+                        py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode]
+                        py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
+                    else:
                         py_prev['pv_'+cfg.cntfact_bspn_mode] = turn_batch[cfg.cntfact_bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.cntfact_bspn_mode]
                         py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
                 if cfg.enable_aspn:

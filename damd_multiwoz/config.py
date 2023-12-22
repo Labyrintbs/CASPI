@@ -111,6 +111,8 @@ class _Config:
 
         # contrast experiment settings
         self.enable_contrast = False
+        self.contrast_ratio = 1
+        self.enable_debug = False
 
     def __str__(self):
         s = ''

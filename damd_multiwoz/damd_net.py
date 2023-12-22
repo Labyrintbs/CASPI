@@ -10,6 +10,7 @@ import utils
 from config import global_config as cfg
 from otherconfig import other_config
 import pdb
+from info_nce import InfoNCE, info_nce
 
 np.set_printoptions(precision=2,suppress=True)
 
@@ -533,13 +534,14 @@ class BeliefSpanDecoder(nn.Module):
         return probs
 
 class CntfactBeliefSpanDecoder(nn.Module):
-    def __init__(self, embedding, vocab_size_oov, bspn_mode, Wgen=None, dropout=0.):
+    def __init__(self, embedding, vocab_size_oov, cntfact_bspn_mode, Wgen=None, dropout=0.):
         super().__init__()
         self.embedding = embedding
         self.embed_size = embedding.embedding_dim
         self.vsize_oov = vocab_size_oov
 
-        self.bspn_mode = bspn_mode
+        self.cntfact_bspn_mode = cntfact_bspn_mode
+        self.bspn_mode = cfg.bspn_mode #To use in contrast learning
 
         self.gru = nn.GRU(3*cfg.hidden_size + self.embed_size, cfg.hidden_size, cfg.dec_layer_num,
                                      dropout=cfg.dropout, batch_first=True)
@@ -564,7 +566,7 @@ class CntfactBeliefSpanDecoder(nn.Module):
 
 
 
-    def forward(self, inputs, hidden_states, dec_last_w, dec_last_h, first_turn, first_step, mode='train'):
+    def forward(self, inputs, hidden_states, dec_last_w, dec_last_h, first_turn, first_step, mode='train', return_bspn=False):
     # def forward(self, inputs, huser, hresp, hbspn, dec_last_w, dec_last_h, first_turn, first_step):
         """[summary]
         :param inputs: inputs dict
@@ -572,9 +574,11 @@ class CntfactBeliefSpanDecoder(nn.Module):
         :param dec_last_w: word index of last decoding step
         :param dec_last_h: hidden state of last decoding step
         :param first_turn: [description], defaults to False
+        :param return_bspn: if true, return real belief's hidden state for contrast learning
         :returns: [description]
         """
-
+        if cfg.enable_contrast:
+            return_bspn = True
         gru_input = []
         embed_last_w = self.embedding(dec_last_w)
         # embed_last_w = self.dropout_layer(embed_last_w)
@@ -584,12 +588,17 @@ class CntfactBeliefSpanDecoder(nn.Module):
         if first_step:
             self.mask_user = (inputs['user']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
             self.mask_pvresp = (inputs['pv_resp']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            self.mask_pvbspn = (inputs['pv_'+self.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+            if return_bspn: 
+                self.mask_pvbspn = (inputs['pv_'+self.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+            else: # normal cntfact process
+                self.mask_pvbspn = (inputs['pv_'+self.cntfact_bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
             # print('masks:', self.mask_user.device, self.mask_pvresp.device, self.mask_pvbspn.device)
         if mode == 'test' and not first_step:
             self.mask_pvresp = (inputs['pv_resp']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            self.mask_pvbspn = (inputs['pv_'+self.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-
+            if return_bspn:
+                self.mask_pvbspn = (inputs['pv_'+self.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+            else:
+                self.mask_pvbspn = (inputs['pv_'+self.cntfact_bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
         # print('user:', inputs['user'][0:2, :])
         context_user = self.attn_user(dec_last_h, hidden_states['user'], self.mask_user)
         # context_user = self.attn_user(dec_last_h, huser, self.mask_user)
@@ -597,7 +606,11 @@ class CntfactBeliefSpanDecoder(nn.Module):
         # print(context_user.size())
         if not first_turn:
             context_pvresp = self.attn_pvresp(dec_last_h, hidden_states['resp'], self.mask_pvresp)
-            context_pvbspn = self.attn_pvbspn(dec_last_h, hidden_states[self.bspn_mode], self.mask_pvbspn)
+            if return_bspn:
+                context_pvbspn = self.attn_pvbspn(dec_last_h, hidden_states[self.bspn_mode], self.mask_pvbspn)
+            else:
+                context_pvbspn = self.attn_pvbspn(dec_last_h, hidden_states[self.cntfact_bspn_mode], self.mask_pvbspn)
+                
 
             # context_pvresp = self.attn_pvresp(dec_last_h, hresp, self.mask_pvresp)
             # context_pvbspn = self.attn_pvbspn(dec_last_h, hbspn, self.mask_pvbspn)
@@ -616,7 +629,7 @@ class CntfactBeliefSpanDecoder(nn.Module):
         return dec_last_h
 
 
-    def get_probs(self, inputs, hidden_states, dec_hs, first_turn=False):
+    def get_probs(self, inputs, hidden_states, dec_hs, first_turn=False, return_bspn=False):
         Tdec = dec_hs.size(1)
 
         raw_scores, word_onehot_input, input_idx_oov = [], [], []
@@ -635,12 +648,18 @@ class CntfactBeliefSpanDecoder(nn.Module):
             raw_scores.append(raw_cp_score_pvresp)
             word_onehot_input.append(inputs['pv_resp_onehot'])
             input_idx_oov.append(inputs['pv_resp_nounk'])
-
-            raw_cp_score_pvbspn = self.cp_pvbspn(hidden_states[self.bspn_mode], dec_hs)   #[B, Tdec, Tb]
-            raw_cp_score_pvbspn.masked_fill_(self.mask_pvbspn.repeat(1,Tdec,1), -1e20)
-            raw_scores.append(raw_cp_score_pvbspn)
-            word_onehot_input.append(inputs['pv_%s_onehot'%self.bspn_mode])
-            input_idx_oov.append(inputs['pv_%s_nounk'%self.bspn_mode])
+            if not return_bspn:
+                raw_cp_score_pvbspn = self.cp_pvbspn(hidden_states[self.cntfact_bspn_mode], dec_hs)   #[B, Tdec, Tb]
+                raw_cp_score_pvbspn.masked_fill_(self.mask_pvbspn.repeat(1,Tdec,1), -1e20)
+                raw_scores.append(raw_cp_score_pvbspn)
+                word_onehot_input.append(inputs['pv_%s_onehot'%self.cntfact_bspn_mode])
+                input_idx_oov.append(inputs['pv_%s_nounk'%self.cntfact_bspn_mode])
+            else:
+                raw_cp_score_pvbspn = self.cp_pvbspn(hidden_states[self.bspn_mode], dec_hs)   #[B, Tdec, Tb]
+                raw_cp_score_pvbspn.masked_fill_(self.mask_pvbspn.repeat(1,Tdec,1), -1e20)
+                raw_scores.append(raw_cp_score_pvbspn)
+                word_onehot_input.append(inputs['pv_%s_onehot'%self.bspn_mode])
+                input_idx_oov.append(inputs['pv_%s_nounk'%self.bspn_mode])
 
         # print('bspn:' , inputs['bspn'][0, 0:10])
         probs = get_final_scores(raw_scores, word_onehot_input, input_idx_oov, self.vsize_oov)   # [B, V_oov]
@@ -1043,14 +1062,18 @@ class DAMD(nn.Module):
             self.dspn_decoder = DomainSpanDecoder(self.embedding, self.vsize_oov, Wgen=Wgen,
                                                                                  dropout=self.dropout)
             self.decoders['dspn'] = self.dspn_decoder
-        if cfg.enable_bspn:
+        if cfg.enable_bspn and not cfg.enable_contrast:
             self.bspn_decoder = BeliefSpanDecoder(self.embedding, self.vsize_oov, cfg.bspn_mode,
                                                                              Wgen = Wgen, dropout = self.dropout)
             self.decoders[cfg.bspn_mode] = self.bspn_decoder
         if cfg.enable_cntfact:
             self.cntfact_bspn_decoder = CntfactBeliefSpanDecoder(self.embedding, self.vsize_oov, cfg.cntfact_bspn_mode,
-                                                                             Wgen = Wgen, dropout = self.dropout)
+                                                                            Wgen = Wgen, dropout = self.dropout)
             self.decoders[cfg.cntfact_bspn_mode] = self.cntfact_bspn_decoder
+        if cfg.enable_contrast:
+            self.bspn_decoder = CntfactBeliefSpanDecoder(self.embedding, self.vsize_oov, cfg.cntfact_bspn_mode,
+                                                                            Wgen = Wgen, dropout = self.dropout)
+            self.decoders[cfg.bspn_mode] = self.bspn_decoder
         if cfg.enable_aspn:
             self.aspn_decoder = ActSpanDecoder(self.embedding, self.vsize_oov,
                                                                           Wgen = Wgen, dropout = self.dropout)
@@ -1193,15 +1216,109 @@ class DAMD(nn.Module):
     def forward(self, inputs, hidden_states, first_turn, mode):
         if mode == 'train' or mode == 'valid':
             # probs, hidden_states = \
+            if cfg.enable_debug:
+                pdb.set_trace()
             probs = \
                 self.train_forward(inputs, hidden_states, first_turn)
             total_loss, losses = self.supervised_loss(inputs, probs)
+            if cfg.enable_contrast:
+                contrast_loss = self.contrast_loss(inputs, hidden_states, first_turn)
+                total_loss += contrast_loss
+                losses['contrast'] = contrast_loss
             return total_loss, losses
         elif mode == 'test':
             decoded = self.test_forward(inputs, hidden_states, first_turn)
             return decoded
         elif mode == 'rl':
             raise NotImplementedError('RL not available at the moment')
+    def contrast_loss(self, inputs, hidden_states, first_turn):
+        
+        """
+        compute contrast loss for a single dialogue turn. 
+        """
+        def train_decode(model_name, init_hidden, hidden_states, probs, bidx=None, first_turn_override=None, return_prob_direct=False, input_name=None):
+            # default model_name and input_name: bspn
+            same_input = True if input_name == model_name else False
+            if first_turn_override is None:
+                first_turn_override=first_turn
+
+            batch_size = inputs['user'].size(0) if bidx is None else len(bidx)
+            dec_last_w = cuda_(torch.ones(batch_size, 1).long() * self.go_idx[input_name])
+            if bidx is None:
+                dec_last_h = (init_hidden[-1]+init_hidden[-2]).unsqueeze(0)
+            else:
+                dec_last_h = (init_hidden[-1]+init_hidden[-2]).unsqueeze(0)[:, bidx, :]
+
+            decode_step = inputs[input_name].size(1) if bidx is None else inputs['aspn_aug_batch'].size(1)
+            hiddens = []
+            sub_layer_hiddens = []
+            for t in range(decode_step):
+                # print('%s step %d'%(name, t))
+                first_step = (t==0)
+                if bidx is None:
+                    dec_last_h = self.decoders[model_name](inputs, hidden_states, dec_last_w,
+                                                                          dec_last_h, first_turn_override, first_step, return_bspn=same_input)
+                    
+                    if isinstance(dec_last_h, tuple):
+                        dec_last_h,dect_sub_layer_h = dec_last_h
+                        sub_layer_hiddens.append(dect_sub_layer_h)
+                        
+                    hiddens.append(dec_last_h)
+                    dec_last_w = inputs[input_name][:, t].view(-1, 1)
+                else:
+                    assert input_name == 'aspn', 'only act span decoder support batch idx selection'
+                    dec_last_h = self.decoders[model_name](inputs, hidden_states, dec_last_w,
+                                                                                 dec_last_h, first_turn_override, first_step, bidx=bidx, return_bspn=same_input)
+                    hiddens.append(dec_last_h)
+                    dec_last_w = inputs['aspn_aug_batch'][:, t].view(-1, 1)
+
+            dec_hs =  torch.cat(hiddens, dim=0).transpose(0,1)  # [1,B,H] ---> [B,T,H]
+            if bidx is None:
+                if return_prob_direct==True:
+                    probs = self.decoders[model_name].get_probs(inputs, hidden_states, dec_hs, first_turn_override, return_bspn=same_input)
+                else:
+                    probs[input_name] = self.decoders[model_name].get_probs(inputs, hidden_states, dec_hs, first_turn_override, return_bspn=same_input)
+                    if input_name != 'resp':
+                        hidden_states[input_name] = dec_hs
+            else:
+                probs = self.decoders[model_name].get_probs(inputs, hidden_states, dec_hs, first_turn_override, bidx=bidx, return_bspn=same_input)
+                
+            if len(sub_layer_hiddens)>0:
+                hidden_states[input_name+'_sub_layer'] = torch.cat(sub_layer_hiddens, dim=1)
+            return hidden_states, probs
+
+
+        user_enc, user_enc_last_h = self.user_encoder(inputs['user']) # inputs: [B, T]
+        usdx_enc, usdx_enc_last_h = self.usdx_encoder(inputs['usdx'])
+        resp_enc, resp_enc_last_h = self.usdx_encoder(inputs['pv_resp'])
+        hidden_states['user'] = user_enc
+        hidden_states['usdx'] = usdx_enc
+        hidden_states['resp'] = resp_enc
+
+        probs = {}
+
+        if cfg.enable_contrast: # true
+            cntfact_bspn_enc, _ = self.span_encoder(inputs['pv_'+cfg.cntfact_bspn_mode]) # compare with bspn
+            hidden_states[cfg.cntfact_bspn_mode] = cntfact_bspn_enc
+            init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h #cfg.bspn_mode='bsdx'
+            hidden_states, probs = train_decode(cfg.bspn_mode, init_hidden, hidden_states, probs, input_name=cfg.cntfact_bspn_mode) 
+            #hidden_states, probs = train_decode(cfg.cntfact_bspn_mode, init_hidden, hidden_states, probs, input_name=cfg.cntfact_bspn_mode) 
+            
+            bspn_enc, _ = self.span_encoder(inputs['pv_'+cfg.bspn_mode]) # compare with bspn
+            hidden_states[cfg.bspn_mode] = bspn_enc
+            init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h #cfg.bspn_mode='bsdx'
+            hidden_states, probs = train_decode(cfg.bspn_mode, init_hidden, hidden_states, probs, input_name=cfg.bspn_mode) 
+            #hidden_states, probs = train_decode(cfg.cntfact_bspn_mode, init_hidden, hidden_states, probs, input_name=cfg.bspn_mode) 
+            context = torch.mean(init_hidden, dim=0) # [2, B, H] -> [B, H]
+            pos_hidden = torch.mean(hidden_states[cfg.bspn_mode], dim=1) # [B, T, H] -> [B, H]
+            neg_hidden = torch.mean(hidden_states[cfg.cntfact_bspn_mode], dim=1)
+            info_loss = InfoNCE(negative_mode='unpaired')
+            loss = info_loss(context, pos_hidden, neg_hidden) * cfg.contrast_ratio
+            return loss 
+        else:
+            raise ValueError(f'Excepted cfg.enable_cntfact and enable_contrast all true, but got {cfg.enable_cntfact} and {cfg.enable_contrast}')
+        
+
 
     def train_forward(self, inputs, hidden_states, first_turn):
         
@@ -1334,11 +1451,20 @@ class DAMD(nn.Module):
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h #cfg.bspn_mode='bsdx'
             hidden_states, probs = train_decode(cfg.bspn_mode, init_hidden, hidden_states, probs) # hidden_states: dict ['user', 'usdx', 'resp', 'bsdx']; prob: dict ['bsdx']
         
+        if cfg.enable_debug:
+            pdb.set_trace()
         if cfg.enable_cntfact: # true
             cntfact_bspn_enc, _ = self.span_encoder(inputs['pv_'+cfg.cntfact_bspn_mode]) # compare with bspn
             hidden_states[cfg.cntfact_bspn_mode] = cntfact_bspn_enc
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h #cfg.bspn_mode='bsdx'
             hidden_states, probs = train_decode(cfg.cntfact_bspn_mode, init_hidden, hidden_states, probs) 
+        if cfg.enable_contrast:
+            bspn_enc, _ = self.span_encoder(inputs['pv_'+cfg.bspn_mode]) # compare with bspn
+            hidden_states[cfg.bspn_mode] = bspn_enc
+            init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h #cfg.bspn_mode='bsdx'
+            hidden_states, probs = train_decode(cfg.bspn_mode, init_hidden, hidden_states, probs) 
+            del probs[cfg.cntfact_bspn_mode] # don't count cntfact bspn in loss calculation
+
 
         if cfg.enable_aspn: # true
             aspn_enc, _ = self.span_encoder(inputs['pv_aspn'])
@@ -1422,18 +1548,31 @@ class DAMD(nn.Module):
                 inputs['db'] = cuda_(torch.from_numpy(inputs['db_np']).float())
 
         if cfg.enable_cntfact:
-            cntfact_bspn_enc, cntfact_bspn_enc_last_h = self.span_encoder(inputs['pv_'+cfg.cntfact_bspn_mode])
-            hs[cfg.cntfact_bspn_mode] = cntfact_bspn_enc
-            init_hidden = user_enc_last_h if cfg.cntfact_bspn_mode == 'cntfact_bspn' else usdx_enc_last_h
-            hs, decoded = self.greedy_decode(cfg.cntfact_bspn_mode, init_hidden, first_turn, inputs, hs, decoded)
+            if cfg.enable_contrast:
+                bspn_enc, bspn_enc_last_h = self.span_encoder(inputs['pv_'+cfg.bspn_mode])
+                hs[cfg.bspn_mode] = bspn_enc
+                init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h
+                hs, decoded = self.greedy_decode(cfg.bspn_mode, init_hidden, first_turn, inputs, hs, decoded)
+                if not cfg.use_true_db_pointer and 'bspn' in decoded:
+                    for bi, cntfact_bspn_list in enumerate(decoded['bspn']):
+                        turn_domain = inputs['turn_domain'][bi]
+                        db_ptr = self.reader.bspan_to_DBpointer(bspn_list, turn_domain)
+                        book_ptr = 'cannot be predicted, use the groud truth'
+                        inputs['db_np'][bi, :cfg.pointer_dim-2] = db_ptr
+                    inputs['db'] = cuda_(torch.from_numpy(inputs['db_np']).float())
+            else:
+                cntfact_bspn_enc, cntfact_bspn_enc_last_h = self.span_encoder(inputs['pv_'+cfg.cntfact_bspn_mode])
+                hs[cfg.cntfact_bspn_mode] = cntfact_bspn_enc
+                init_hidden = user_enc_last_h if cfg.cntfact_bspn_mode == 'cntfact_bspn' else usdx_enc_last_h
+                hs, decoded = self.greedy_decode(cfg.cntfact_bspn_mode, init_hidden, first_turn, inputs, hs, decoded)
 
-            if not cfg.use_true_db_pointer and 'cntfact_bspn' in decoded:
-                for bi, cntfact_bspn_list in enumerate(decoded['cntfact_bspn']):
-                    turn_domain = inputs['turn_domain'][bi]
-                    db_ptr = self.reader.bspan_to_DBpointer(cntfact_bspn_list, turn_domain)
-                    book_ptr = 'cannot be predicted, use the groud truth'
-                    inputs['db_np'][bi, :cfg.pointer_dim-2] = db_ptr
-                inputs['db'] = cuda_(torch.from_numpy(inputs['db_np']).float())
+                if not cfg.use_true_db_pointer and 'cntfact_bspn' in decoded:
+                    for bi, cntfact_bspn_list in enumerate(decoded['cntfact_bspn']):
+                        turn_domain = inputs['turn_domain'][bi]
+                        db_ptr = self.reader.bspan_to_DBpointer(cntfact_bspn_list, turn_domain)
+                        book_ptr = 'cannot be predicted, use the groud truth'
+                        inputs['db_np'][bi, :cfg.pointer_dim-2] = db_ptr
+                    inputs['db'] = cuda_(torch.from_numpy(inputs['db_np']).float())
 
         if cfg.enable_aspn:
             aspn_enc, aspn_enc_last_h = self.span_encoder(inputs['pv_aspn'])
