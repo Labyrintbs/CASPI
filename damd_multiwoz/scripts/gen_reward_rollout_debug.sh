@@ -27,7 +27,7 @@ bspn_mode=bspn
 enable_dst=False
 use_true_curr_bspn=True
 enable_cntfact=True
-enable_debug=True
+enable_debug=False
 enable_contrast=True
 
 root_path=./damd_multiwoz

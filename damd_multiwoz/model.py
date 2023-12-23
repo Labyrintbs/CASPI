@@ -19,6 +19,7 @@ from sklearn.metrics import precision_recall_fscore_support
 import pandas as pd
 import nvidia_smi
 import pdb
+torch.autograd.set_detect_anomaly(True)
 class Model(object):
     def __init__(self):
         self.reader = MultiWozReader()
@@ -193,7 +194,12 @@ class Model(object):
                         py_prev['pv_aspn'] = turn_batch['aspn']
                     if cfg.enable_dspn:
                         py_prev['pv_dspn'] = turn_batch['dspn']
-                    if cfg.enable_cntfact:
+                    if cfg.enable_cntfact and not cfg.enable_contrast:
+                        py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx']
+                        py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn']
+                    if cfg.enable_contrast:
+                        py_prev['pv_bspn'] = turn_batch['bspn']
+                        py_prev['pv_bsdx'] = turn_batch['bsdx']
                         py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx']
                         py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn']
 
@@ -315,6 +321,11 @@ class Model(object):
                     if cfg.enable_cntfact and not cfg.enable_contrast:
                         py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx']
                         py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn']
+                    if cfg.enable_contrast:
+                        py_prev['pv_bspn'] = turn_batch['bspn']
+                        py_prev['pv_bsdx'] = turn_batch['bsdx']
+                        py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx']
+                        py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn']
 
                     if cfg.valid_loss == 'total_loss':
                         valid_loss += float(total_loss)
@@ -328,7 +339,6 @@ class Model(object):
                         raise ValueError('Invalid validation loss type!')
                 else:
                     decoded = self.m(inputs, hidden_states, first_turn, mode='test')
-                    #pdb.set_trace()
                     turn_batch['resp_gen'] = decoded['resp']
                     if cfg.bspn_mode == 'bspn' or cfg.enable_dst: #False
                         if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn' and not cfg.enable_contrast:
@@ -341,13 +351,14 @@ class Model(object):
                     if cfg.enable_bspn and not cfg.enable_cntfact:
                         py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode] # py_prev['pv_bsdx'] = turn_batch['bsdx']
                         py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn'] # True
-                    if cfg.enable_cntfact:
-                        if cfg.enable_contrast:
-                            py_prev['pv_bsdx'] = turn_batch['bsdx'] if cfg.use_true_prev_bspn or 'bsdx' not in decoded else decoded['bsdx'] 
-                            py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
-                        else:
-                            py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx'] if cfg.use_true_prev_bspn or 'cntfact_bsdx' not in decoded else decoded['cntfact_bsdx'] 
-                            py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
+                    if cfg.enable_cntfact and not cfg.enable_contrast:
+                        py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx'] if cfg.use_true_prev_bspn or 'cntfact_bsdx' not in decoded else decoded['cntfact_bsdx'] 
+                        py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
+                    if cfg.enable_contrast:
+                        py_prev['pv_bsdx'] = turn_batch['bsdx'] if cfg.use_true_prev_bspn or 'bsdx' not in decoded else decoded['bsdx'] 
+                        py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
+                        py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx'] if cfg.use_true_prev_bspn or 'cntfact_bsdx' not in decoded else decoded['cntfact_bsdx'] 
+                        py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
                     if cfg.enable_aspn:
                         py_prev['pv_aspn'] = turn_batch['aspn'] if cfg.use_true_prev_aspn else decoded['aspn']
                     if cfg.enable_dspn:
@@ -386,7 +397,6 @@ class Model(object):
 
                     
             if other_config['gen_per_epoch_report']==True:
-                #pdb.set_trace()
                 bleu, success, match,req_offer_counts,stats,all_true_reqs,all_pred_reqs, success_true, all_successes, all_matches, all_bleus ,dial_ids = self.evaluator.validation_metric(results, return_rich=True, return_per_dialog=True,soft_acc=other_config['soft_acc'])
                 for i,dial_id in enumerate(dial_ids):
                     self.df.loc[len(self.df)] = [dial_id,all_successes[i],all_matches[i],all_bleus[i],json.dumps(rollouts[dial_id])]
@@ -427,7 +437,6 @@ class Model(object):
                 inputs = self.add_torch_input(inputs, first_turn=first_turn)
                 decoded = self.m(inputs, hidden_states, first_turn, mode='test')
                 #print(decoded)
-                #pdb.set_trace()
                 turn_batch['resp_gen'] = decoded['resp']
                 #if cfg.bspn_mode == 'bsdx':
                 if cfg.bspn_mode == 'bsdx' and not cfg.enable_cntfact:
@@ -459,13 +468,14 @@ class Model(object):
                 if cfg.enable_bspn and not cfg.enable_cntfact:
                     py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode]
                     py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
-                if cfg.enable_cntfact:
-                    if cfg.enable_contrast:
-                        py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode]
-                        py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
-                    else:
-                        py_prev['pv_'+cfg.cntfact_bspn_mode] = turn_batch[cfg.cntfact_bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.cntfact_bspn_mode]
-                        py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
+                if cfg.enable_cntfact and not cfg.enable_contrast:
+                    py_prev['pv_'+cfg.cntfact_bspn_mode] = turn_batch[cfg.cntfact_bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.cntfact_bspn_mode]
+                    py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
+                if cfg.enable_contrast:
+                    py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode]
+                    py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
+                    #py_prev['pv_'+cfg.cntfact_bspn_mode] = turn_batch[cfg.cntfact_bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.cntfact_bspn_mode]
+                    #py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
                 if cfg.enable_aspn:
                     py_prev['pv_aspn'] = turn_batch['aspn'] if cfg.use_true_prev_aspn else decoded['aspn']
                 if cfg.enable_dspn:
@@ -475,14 +485,12 @@ class Model(object):
             # print('test iter %d'%(batch_num+1))
             # print(dial_batch)
             result_collection.update(self.reader.inverse_transpose_batch(dial_batch)) # ['dial_id', 'user', 'usdx', 'resp', 'bspn', 'bsdx', 'aspn', 'dspn', 'cntfact_bspn', 'cntfact_bsdx', 'pointer', 'input_pointer', 'turn_domain', 'turn_num', 'resp_gen', 'bspn_gen', 'aspn_gen', 'dspn_gen']
-            #pdb.set_trace()
 
         # self.reader.result_file.close()
         if cfg.record_mode:
             self.reader.record_utterance(result_collection)
             quit()
         
-        #pdb.set_trace()
         results, field = self.reader.wrap_result(result_collection)
         #print(results)
         self.reader.save_result('w', results, field)
@@ -611,7 +619,6 @@ def main():
     parser.add_argument('-mode')
     parser.add_argument('-cfg', nargs='*')
     args = parser.parse_args()
-    #pdb.set_trace()
     cfg.mode = args.mode
     if args.mode == 'test' or args.mode=='adjust':
         parse_arg_cfg(args)
