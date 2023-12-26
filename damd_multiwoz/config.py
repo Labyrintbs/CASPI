@@ -99,6 +99,8 @@ class _Config:
         self.record_mode = False
 
         # counter_fact experiment settings
+        self.enable_tensorboard = False
+        self.tensorboard_path = 'experiments/all_multi_acts_sample3_sd777_lr0.005_bs80_sp5_dc3/runs' # saved in cfg.exp
         self.enable_cntfact = False
         self.cntfact_bspn_mode = 'cntfact_bspn' #'cntfact_bsdx'
         self.use_true_curr_cntfact_bspn = False

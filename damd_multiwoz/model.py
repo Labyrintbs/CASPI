@@ -45,6 +45,8 @@ class Model(object):
                 v_ = cuda_(torch.Tensor(values).long())
                 self.reader.aspn_masks_tensor[key] = v_
                 
+        if cfg.enable_tensorboard:
+            self.writer = SummaryWriter(cfg.tensorboard_path)
         self.epoch=0
         if other_config['gen_per_epoch_report']==True:
             self.df = pd.DataFrame(columns=['dial_id','success','match','bleu','rollout'])
@@ -145,6 +147,8 @@ class Model(object):
             if epoch <= self.base_epoch:
                 continue
             self.training_adjust(epoch)
+            log_sup_loss = 0
+            log_contrast_loss = 0
             sup_loss = 0
             sup_cnt = 0
             optim = self.optim
@@ -212,6 +216,10 @@ class Model(object):
                     grad = torch.nn.utils.clip_grad_norm_(self.m.parameters(), 5.0)
                     optim.step()
                     sup_loss += float(total_loss)
+                    if cfg.enable_tensorboard:
+                        pdb.set_trace()
+                        log_contrast_loss += 0 if not cfg.enable_contrast else float(losses['contrast'])
+                        log_sup_loss = sup_loss - log_contrast_loss
                     sup_cnt += 1
                     torch.cuda.empty_cache()
 
@@ -253,11 +261,22 @@ class Model(object):
                 #     print('validation checking ... ')
                 #     valid_sup_loss, valid_unsup_loss = self.validate(do_test=False)
                 #     logging.info('validation loss in epoch %d sup:%f unsup:%f' % (epoch, valid_sup_loss, valid_unsup_loss))
+            
+            if cfg.enable_tensorboard:
+                epoch_log_sup_loss = log_sup_loss / (sup_cnt + 1e-8)
+                epoch_log_contrast_loss = log_contrast_loss / (sup_cnt + 1e-8)
+                epoch_log_total_loss = epoch_log_sup_loss + epoch_log_contrast_loss
+                self.writer.add_scalar('SupervisedLoss/train', epoch_log_sup_loss, epoch)
+                self.writer.add_scalar('ContrastLoss/train', epoch_log_contrast_loss, epoch)
+                self.writer.add_scalar('TotalLoss/train', epoch_log_total_loss, epoch)
+                pass
 
-            epoch_sup_loss = sup_loss / (sup_cnt + 1e-8)
+            epoch_sup_loss = sup_loss / (sup_cnt + 1e-8) # ori loss
             # do_test = True if (epoch+1)%5==0 else False
             do_test = False
             valid_loss = self.validate(do_test=do_test)
+            if cfg.enable_tensorboard:
+                self.writer.add_scalar('Score/valid', 130 - valid_loss, epoch)
             logging.info('epoch: %d, train loss: %.3f, valid loss: %.3f, total time: %.1fmin' % (epoch+1, epoch_sup_loss,
                     valid_loss, (time.time()-sw)/60))
             # self.save_model(epoch)
@@ -662,6 +681,9 @@ def main():
             cfg.model_path = os.path.join(cfg.exp_path, 'model.pkl')
             cfg.result_path = os.path.join(cfg.exp_path, 'result.csv')
             cfg.vocab_path_eval = os.path.join(cfg.exp_path, 'vocab')
+            if cfg.enable_tensorboard:
+                cfg.tensorboard_path = os.path.join(cfg.exp_path, 'runs')
+                logging.info('tensorboard_path {}'.format(cfg.tensorboard_path))
             cfg.eval_load_path = cfg.exp_path
 
     cfg._init_logging_handler(args.mode)
@@ -703,6 +725,8 @@ def main():
         m.load_model(cfg.model_path)
         # m.train()
         m.eval(data='test')
+    if cfg.enable_tensorboard:
+        m.writer.close()
 
 
 

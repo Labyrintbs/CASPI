@@ -29,6 +29,7 @@ use_true_curr_bspn=True
 enable_cntfact=True
 enable_debug=False
 enable_contrast=True
+enable_tensorboard=True
 
 root_path=./damd_multiwoz
 
@@ -56,4 +57,5 @@ python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
 	enable_cntfact=${enable_cntfact} \
 	enable_debug=${enable_debug} \
 	enable_contrast=${enable_contrast} \
+	enable_tensorboard=${enable_tensorboard}\
 
