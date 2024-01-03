@@ -101,15 +101,16 @@ class _Config:
         # counter_fact experiment settings
         self.enable_tensorboard = False
         self.tensorboard_path = 'experiments/all_multi_acts_sample3_sd777_lr0.005_bs80_sp5_dc3/runs' # saved in cfg.exp
-        self.enable_cntfact = False
+        self.enable_cntfact = True
         self.cntfact_bspn_mode = 'cntfact_bspn' #'cntfact_bsdx'
         self.use_true_curr_cntfact_bspn = False
         self.skip_preprocess = True # jump redump of domain_db.json to domain_db_processed.json
         self.preprocess_model_path = '../../all-MiniLM-L6-v2/'
         self.topk_cntfact = 5
         self.cntfact_max_mode = True # replace belief state with one topk counterfact item's
-        self.cntfact_max_save_path = 'data/multi-woz-processed/cntfact_data_for_damd_ratio_0.1.json'
-        self.cntfact_raio = 0.1
+        self.cntfact_max_save_path = 'data/multi-woz-processed/cntfact_data_for_damd_ratio_0.1_K_5_debug.json'
+        self.cntfact_raio = 1
+        self.enable_multi_cntfact = True
 
         # contrast experiment settings
         self.enable_contrast = False

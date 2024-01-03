@@ -369,14 +369,171 @@ class DataPreprocessor(object):
         '''
         # note that only system turn(metadate not None) can have constraints
         return None
+    def construct_cons_max_multi(self, cons_dict, prev_cons_dict, cross_domain=False, debug=False):
+        '''
+        choose cfg.topk_cntfact item from 2 * cfg.topk_cntfact items 
+        return cfg.topk_cntfact cntfact slot-value list. 
+        select the most similar and not diff items.
+
+        Input:  
+        cons_dict, OrderedDict
+        Ex: [('hotel', OrderedDict([('pricerange', 'cheap'), ('type', 'hotel')]))]
+        prev_cons_dict, list of OrderedDict
+
+        Output: list of cons_dict_random, [OrderedDict]
+        '''
+        if len(list(cons_dict.keys())) >=2 and debug:
+            print('current cons_dict contains more than 1 dom:', list(cons_dict.keys()))
+        for dom, slot_values in cons_dict.items():
+            total_scores = 0
+            dom_dict = extract_dom_data(self.pre_db_paths[dom])
+            db_slot_num = 0
+            prev_slot = prev_cons_dict[0][dom].keys() if prev_cons_dict[0].get(dom) else [] # all prev_cons_dict has same slot, diff values, 0 is ok
+            special_slot = SPECIFIC_SLOT[dom] if SPECIFIC_SLOT.get(dom) else []
+            top_k = cfg.topk_cntfact
+            for slot, value in slot_values.items():
+                if slot not in prev_slot:
+                    if slot not in special_slot:
+                        db_slot_num += 1 
+                        query = convert2str(value)
+                        corpus = dom_dict[slot]
+                        corpus_embeddings = self.model.encode(corpus, convert_to_tensor=True)
+                        query_embedding = self.model.encode(query, convert_to_tensor=True)
+                        #top_k = min(cfg.topk_cntfact, len(corpus))
+                        # We use cosine-similarity and torch.topk to find the highest 5 scores
+                        cos_scores = util.cos_sim(query_embedding, corpus_embeddings)[0]
+                        #print(f'cos_scors shape: {cos_scores.shape}')
+                        total_scores += cos_scores
+                    '''
+                    else: # for special slot, choose one from value_set
+                        db_slot_num += 1
+                        query = convert2str(value)
+                        corpus = extract_value_data(self.value_set_path, dom, slot)
+                    '''
+            if db_slot_num > 0:           
+                total_scores /= db_slot_num
+                domain_top_results = torch.topk(total_scores, k=2*top_k)
+                top_k_score = domain_top_results[0].tolist()
+                top_k_index = domain_top_results[1].tolist()
+                current_item = top_k_index.pop(0)
+                current_score = top_k_score.pop(0)
+                selected_indices = [] 
+                selected_scores = []
+                for i in range(len(top_k_index)):  
+                    if len(selected_indices) >= top_k:
+                        break
+                    if round(top_k_score[i], 4) not in selected_scores:
+                        selected_scores.append(round(top_k_score[i], 4))
+                        selected_indices.append(top_k_index[i])
+                if len(selected_indices) < top_k: # not enough cntfact items, by default add new ones from top to bottom
+                    for i in range(top_k):
+                        if len(selected_indices) >= top_k:
+                            break
+                        if top_k_index[i] not in selected_indices:
+                            selected_scores.append(round(top_k_score[i], 4))
+                            selected_indices.append(top_k_index[i])
+            # replace cntfact value for current cons_dict's slot
+            with open (self.pre_db_paths[dom], 'r') as f:
+                dom_data = json.loads(f.read().lower())
+                if db_slot_num > 0:
+                    cntfact_items = [dom_data[cntfact_index] for cntfact_index in selected_indices]
+                    if debug:
+                        print('\n =========================== \n')
+                        print('cntfact item ')
+                        pprint.pprint(cntfact_items)
+
+                cntfact_cons_dict = copy.deepcopy(prev_cons_dict)
+                if debug:
+                    print("\n ************* ori cntfact_cons_dict **************")
+                    print(cntfact_cons_dict)
+                # only consider genearte multiple cntfact here, and prev_cons_dict is list of OrderedDict or None
+                for i in range(len(prev_cons_dict)):
+                    if not prev_cons_dict[i].get(dom):
+                        #cntfact_cons_dict = copy.deepcopy(prev_cons_dict) # TODO: only copy the single dom's cons_dict, otherwise the prev processed will be modified.
+                        cntfact_cons_dict[i][dom] = cons_dict[dom] # add new domain's metadata and modify it
+                if debug: 
+                    print("\n ************* copyed but not modified cntfact_cons_dict **************")
+                    print(cntfact_cons_dict)
+                for slot, value in slot_values.items():
+                    if db_slot_num > 0 :
+                        if slot not in prev_slot: # cntfact_item = dom_data[cntfact_indice]
+                            for i, cntfact_item in enumerate(cntfact_items):
+                                if cntfact_item.get(slot): # current_item = top_k_index.pop(0)
+                                    cntfact_cons_dict[i][dom][slot] = cntfact_item[slot]
+                                else:
+                                    cntfact_cons_dict[i][dom][slot] = ' '
+                    elif slot not in prev_slot and slot in SPECIFIC_SLOT[dom]:
+                        query = convert2str(value)
+                        corpus = extract_value_data(self.value_set_path, dom, slot)
+                        top_k = min(2*cfg.topk_cntfact, len(corpus))
+                        corpus_embeddings = self.model.encode(corpus, convert_to_tensor=True)
+                        query_embedding = self.model.encode(query, convert_to_tensor=True)
+                        cos_scores = util.cos_sim(query_embedding, corpus_embeddings)[0] 
+                        if top_k > len(corpus):
+                            print(f"ATTENTION! top_cntfact got {top_k} but corpus got {len(corpus)}")
+                        #pdb.set_trace()
+                        slot_top_results = torch.topk(cos_scores, k=top_k)
+                        top_k_index = slot_top_results[1].tolist()
+                        top_k_score = slot_top_results[0].tolist()
+                        current_indice = top_k_index.pop(0)
+                        current_score = top_k_score.pop(0)
+                        current_value = query
+                        selected_indices = [] 
+                        selected_scores = []
+                        for i in range(len(top_k_index)):  
+                            if len(selected_indices) >= cfg.topk_cntfact:
+                                break
+                            if round(top_k_score[i], 4) not in selected_scores:
+                                selected_scores.append(round(top_k_score[i], 4))
+                                selected_indices.append(top_k_index[i])
+                        if len(selected_indices) < cfg.topk_cntfact: # not enough cntfact items, by default add new ones from top to bottom
+                            for i in range(cfg.topk_cntfact):
+                                if len(selected_indices) >= cfg.topk_cntfact:
+                                    break
+                                if top_k_index[i] not in selected_indices:
+                                    selected_scores.appen(round(top_k_score[i], 4))
+                                    selected_indices.append(top_k_index[i])
+                        if debug:
+                            print('****************** current special value ****************')
+                            print(current_value)
+                            print('****************** cntfact special value ****************')
+                            print([corpus[i] for i in selected_indices])
+                        for i, cntfact_index in enumerate(selected_indices):
+                            cntfact_cons_dict[i][dom][slot] = corpus[cntfact_index]
+                    #else:
+                    #    cntfact_cons_dict[dom][slot] = ' '
+            prev_cons_dict = cntfact_cons_dict
+            if debug:
+                print('\n ******** modified prev_cons_dict **********')
+                print(prev_cons_dict)
+                
+            if debug:                            
+                print('\n ************** current cons_dict ***************')
+                print(cons_dict)
+                if db_slot_num > 0:
+                    print('original item:')
+                    #pprint.pprint(dom_data[current_item]) 
+                    print("Query:", query)
+                    '''
+                    print("\nTop 5 most similar sentences in corpus:")
+                    print('top scores and index:')
+                    for score, idx in zip(domain_top_results[0], domain_top_results[1]):
+                        print("index: {}".format(idx), "(Score: {:.4f})".format(score))
+                    '''
+                print('\n ************ final turn cntfact_consdict *************')
+                print(cntfact_cons_dict)
+                
+        return cntfact_cons_dict
 
     def construct_cons_max(self, cons_dict, prev_cons_dict, cross_domain=False, debug=False):
         '''
         choose most simliar item within domain, replace current constraints with the random one 
+        
 
-        Input:  cons_dict, OrderedDict
+        Input:  
+        cons_dict, OrderedDict
         Ex: [('hotel', OrderedDict([('pricerange', 'cheap'), ('type', 'hotel')]))]
-
+        multiple: return cfg.topk_cntfact result. select the most similar and not diff scores 
         Output: cons_dict_random, OrderedDict
         '''
         if len(list(cons_dict.keys())) >=2 and debug:
@@ -518,7 +675,7 @@ class DataPreprocessor(object):
             constraint_dict = OrderedDict()
             prev_constraint_dict = {} # origin code's sentinal
             if cfg.enable_cntfact:
-                prev_cntfact_constraint_dict = OrderedDict() # initialize prev_cntfact_constraint_dict
+                prev_cntfact_constraint_dict = OrderedDict() if not cfg.enable_multi_cntfact else [OrderedDict() for _ in range(cfg.topk_cntfact)]# initialize prev_cntfact_constraint_dict
             prev_turn_domain = ['general']
             ordered_sysact_dict[fn] = {}
 
@@ -593,7 +750,10 @@ class DataPreprocessor(object):
                             #print(prev_cntfact_constraint_dict)
                             #pdb.set_trace()
                             cntfact_start = time.time()
-                            cntfact_constraint_dict = self.construct_cons_max(constraint_dict, prev_cntfact_constraint_dict, debug=False)
+                            if cfg.enable_multi_cntfact:
+                                cntfact_constraint_dict = self.construct_cons_max_multi(constraint_dict, prev_cntfact_constraint_dict, debug=False)
+                            else:
+                                cntfact_constraint_dict = self.construct_cons_max(constraint_dict, prev_cntfact_constraint_dict, debug=False)
                             cntfact_end = time.time()
                             cntfact_total_time += cntfact_end - cntfact_start
                             if count % 100 == 0:
@@ -601,22 +761,48 @@ class DataPreprocessor(object):
                             cntfact_constraints = []
                             cntfact_cons_delex = []
                             cntfact_turn_dom_bs = []
-                            for domain, info_slots in cntfact_constraint_dict.items(): # add conuter_fact belief state here as additional dict
-                                if info_slots:
-                                    cntfact_constraints.append('['+domain+']')
-                                    cntfact_cons_delex.append('['+domain+']')
-                                    for slot, value in info_slots.items():
-                                        cntfact_constraints.append(slot)
-                                        cntfact_constraints.extend(value.split()) # add slot and value. ex: ['[hotel]', 'pricerange', 'cheap', 'type', 'hotel']
-                                        cntfact_cons_delex.append(slot) # add only slot. ex: ['[hotel]', 'pricerange', 'type']
-                                    if domain not in prev_constraint_dict:
-                                        cntfact_turn_dom_bs.append(domain)
-                                    elif prev_constraint_dict[domain] != cntfact_constraint_dict[domain]:
-                                        cntfact_turn_dom_bs.append(domain) 
+                            if cfg.enable_multi_cntfact:
+                                for i, single_dict in enumerate(cntfact_constraint_dict):
+                                    _cntfact_constraint = []
+                                    _cntfact_cons_delex = []
+                                    _cntfact_turn_dom_bs = []
+                                    for domain, info_slots in single_dict.items(): # add conuter_fact belief state here as additional dict
+                                        if info_slots:
+                                            _cntfact_constraint.append('['+domain+']')
+                                            _cntfact_cons_delex.append('['+domain+']')
+                                            for slot, value in info_slots.items():
+                                                _cntfact_constraint.append(slot)
+                                                _cntfact_constraint.extend(value.split()) # add slot and value. ex: ['[hotel]', 'pricerange', 'cheap', 'type', 'hotel']
+                                                _cntfact_cons_delex.append(slot) # add only slot. ex: ['[hotel]', 'pricerange', 'type']
+                                            if domain not in prev_constraint_dict:
+                                                _cntfact_turn_dom_bs.append(domain)
+                                            elif prev_constraint_dict[domain] != cntfact_constraint_dict[i][domain]:
+                                                _cntfact_turn_dom_bs.append(domain) 
+                                    cntfact_constraints.append(_cntfact_constraint)
+                                    cntfact_cons_delex.append(_cntfact_cons_delex)
+                                    cntfact_turn_dom_bs.append(_cntfact_turn_dom_bs)
+                            else:
+                                for domain, info_slots in cntfact_constraint_dict.items(): # add conuter_fact belief state here as additional dict
+                                    if info_slots:
+                                        cntfact_constraints.append('['+domain+']')
+                                        cntfact_cons_delex.append('['+domain+']')
+                                        for slot, value in info_slots.items():
+                                            cntfact_constraints.append(slot)
+                                            cntfact_constraints.extend(value.split()) # add slot and value. ex: ['[hotel]', 'pricerange', 'cheap', 'type', 'hotel']
+                                            cntfact_cons_delex.append(slot) # add only slot. ex: ['[hotel]', 'pricerange', 'type']
+                                        if domain not in prev_constraint_dict:
+                                            cntfact_turn_dom_bs.append(domain)
+                                        elif prev_constraint_dict[domain] != cntfact_constraint_dict[domain]:
+                                            cntfact_turn_dom_bs.append(domain) 
                         else:
-                            cntfact_constraints = constraints
-                            cntfact_cons_delex = cons_delex
-                            cntfact_turn_dom_bs = turn_dom_bs
+                            if cfg.enable_multi_cntfact:
+                                cntfact_constraints = [constraints for _ in range(cfg.topk_cntfact)]
+                                cntfact_cons_delex = [cons_delex for _ in range(cfg.topk_cntfact)]
+                                cntfact_turn_dom_bs = [turn_dom_bs for _ in range(cfg.topk_cntfact)]
+                            else:
+                                cntfact_constraints = constraints
+                                cntfact_cons_delex = cons_delex
+                                cntfact_turn_dom_bs = turn_dom_bs
 
                     sys_act_dict = {}
                     turn_dom_da = set()
@@ -708,8 +894,12 @@ class DataPreprocessor(object):
                     single_turn['constraint'] = ' '.join(constraints)
                     single_turn['cons_delex'] = ' '.join(cons_delex)
                     if cfg.enable_cntfact and cfg.cntfact_max_mode:
-                        single_turn['cntfact_constraint_max'] = ' '.join(cntfact_constraints)
-                        single_turn['cntfact_cons_delex_max'] = ' '.join(cntfact_cons_delex)
+                        if cfg.enable_multi_cntfact:
+                            single_turn['cntfact_constraint_max'] = [' '.join(_cntfact_constraint) for _cntfact_constraint in cntfact_constraints]
+                            single_turn['cntfact_cons_delex_max'] = [' '.join(_cntfact_cons_delex) for _cntfact_constraint in cntfact_cons_delex]
+                        else:
+                            single_turn['cntfact_constraint_max'] = ' '.join(cntfact_constraints)
+                            single_turn['cntfact_cons_delex_max'] = ' '.join(cntfact_cons_delex)
                     single_turn['sys_act'] = ' '.join(sys_act)
                     single_turn['turn_num'] = len(dial['log'])
                     single_turn['turn_domain'] = ' '.join(['['+d+']' for d in turn_domain])
@@ -737,7 +927,7 @@ class DataPreprocessor(object):
                     '''
 
                     prev_turn_domain = copy.deepcopy(turn_domain)
-                    prev_constraint_dict = copy.deepcopy(constraint_dict)
+                    prev_constraint_dict = copy.deepcopy(constraint_dict) #if not cfg.enable_multi_cntfact else [copy.deepcopy(constraint_dict) for _ in range(cfg.topk_cntfact)]
                     if cfg.cntfact_max_mode:
                         if cntfact_active:
                             prev_cntfact_constraint_dict = copy.deepcopy(cntfact_constraint_dict)
