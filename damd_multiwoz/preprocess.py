@@ -448,9 +448,9 @@ class DataPreprocessor(object):
                     print(cntfact_cons_dict)
                 # only consider genearte multiple cntfact here, and prev_cons_dict is list of OrderedDict or None
                 for i in range(len(prev_cons_dict)):
-                    if not prev_cons_dict[i].get(dom):
+                    if not prev_cons_dict[i].get(dom): # bug here
                         #cntfact_cons_dict = copy.deepcopy(prev_cons_dict) # TODO: only copy the single dom's cons_dict, otherwise the prev processed will be modified.
-                        cntfact_cons_dict[i][dom] = cons_dict[dom] # add new domain's metadata and modify it
+                        cntfact_cons_dict[i][dom] = copy.deepcopy(cons_dict[dom]) # add new domain's metadata and modify it. deepcopy to avoid same modification to all elements
                 if debug: 
                     print("\n ************* copyed but not modified cntfact_cons_dict **************")
                     print(cntfact_cons_dict)
