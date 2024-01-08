@@ -66,26 +66,58 @@ class Model(object):
                 continue
             if not cfg.enable_dspn and item == 'dspn':
                 continue
-            inputs[item] = cuda_(torch.from_numpy(inputs[item+'_unk_np']).long())
-            if item in ['user', 'usdx', 'resp', 'bspn', 'cntfact_bspn']:
-                inputs[item+'_nounk'] = cuda_(torch.from_numpy(inputs[item+'_np']).long())
+            if item in ['cntfact_bspn', 'cntfact_bsdx'] and cfg.enable_multi_cntfact:
+                inputs[item] = []
+                inputs[item+'_nounk'] = []
+                #inputs[item+'_4loss'] = []
+                inputs[item+'_onehot'] = []
+                inputs['pv_'+item] = []
+                inputs['pv_'+item+'_nounk'] = []
+                inputs['pv_' + item + '_onehot'] = []
+                for i in range(cfg.topk_cntfact):
+                    inputs[item].append(cuda_(torch.from_numpy(inputs[item+'_unk_np'][i]).long()))
+                    
+                for i in range(cfg.topk_cntfact):
+                    if item in ['user', 'usdx', 'resp', 'bspn', 'cntfact_bspn']:
+                        inputs[item+'_nounk'].append(cuda_(torch.from_numpy(inputs[item+'_np'][i]).long()))
+                    else:
+                        inputs[item+'_nounk'].append(inputs[item][i])
+                    # print(item, inputs[item].size())
+                    if item in ['resp', 'bspn', 'aspn', 'bsdx', 'dspn', 'cntfact_bspn', 'cntfact_bsdx']:
+                        if 'pv_'+item+'_unk_np' not in inputs:
+                            continue
+                        inputs['pv_'+item].append(cuda_(torch.from_numpy(inputs['pv_'+item+'_unk_np'][i]).long()))
+                        if item in ['user', 'usdx', 'bspn', 'cntfact_bspn']:
+                            inputs['pv_'+item+'_nounk'].append(cuda_(torch.from_numpy(inputs['pv_'+item+'_np'][i]).long()))
+                            #inputs[item+'_4loss'].append(self.index_for_loss(item[i], inputs))
+                        else:
+                            inputs['pv_'+item+'_nounk'].append(inputs['pv_'+item][i])
+                            #inputs[item+'_4loss'].append(inputs[item][i])
+                        if 'pv_' + item in need_onehot:
+                            inputs['pv_' + item + '_onehot'].append(get_one_hot_input(inputs['pv_'+item+'_unk_np'][i]))
+                    if item in need_onehot:
+                        inputs[item+'_onehot'].append(get_one_hot_input(inputs[item+'_unk_np'][i]))
             else:
-                inputs[item+'_nounk'] = inputs[item]
-            # print(item, inputs[item].size())
-            if item in ['resp', 'bspn', 'aspn', 'bsdx', 'dspn', 'cntfact_bspn', 'cntfact_bsdx']:
-                if 'pv_'+item+'_unk_np' not in inputs:
-                    continue
-                inputs['pv_'+item] = cuda_(torch.from_numpy(inputs['pv_'+item+'_unk_np']).long())
-                if item in ['user', 'usdx', 'bspn', 'cntfact_bspn']:
-                    inputs['pv_'+item+'_nounk'] = cuda_(torch.from_numpy(inputs['pv_'+item+'_np']).long())
-                    inputs[item+'_4loss'] = self.index_for_loss(item, inputs)
+                inputs[item] = cuda_(torch.from_numpy(inputs[item+'_unk_np']).long())
+                if item in ['user', 'usdx', 'resp', 'bspn', 'cntfact_bspn']:
+                    inputs[item+'_nounk'] = cuda_(torch.from_numpy(inputs[item+'_np']).long())
                 else:
-                    inputs['pv_'+item+'_nounk'] = inputs['pv_'+item]
-                    inputs[item+'_4loss'] = inputs[item]
-                if 'pv_' + item in need_onehot:
-                    inputs['pv_' + item + '_onehot'] = get_one_hot_input(inputs['pv_'+item+'_unk_np'])
-            if item in need_onehot:
-                inputs[item+'_onehot'] = get_one_hot_input(inputs[item+'_unk_np'])
+                    inputs[item+'_nounk'] = inputs[item]
+                # print(item, inputs[item].size())
+                if item in ['resp', 'bspn', 'aspn', 'bsdx', 'dspn', 'cntfact_bspn', 'cntfact_bsdx']:
+                    if 'pv_'+item+'_unk_np' not in inputs:
+                        continue
+                    inputs['pv_'+item] = cuda_(torch.from_numpy(inputs['pv_'+item+'_unk_np']).long())
+                    if item in ['user', 'usdx', 'bspn', 'cntfact_bspn']:
+                        inputs['pv_'+item+'_nounk'] = cuda_(torch.from_numpy(inputs['pv_'+item+'_np']).long())
+                        inputs[item+'_4loss'] = self.index_for_loss(item, inputs)
+                    else:
+                        inputs['pv_'+item+'_nounk'] = inputs['pv_'+item]
+                        inputs[item+'_4loss'] = inputs[item]
+                    if 'pv_' + item in need_onehot:
+                        inputs['pv_' + item + '_onehot'] = get_one_hot_input(inputs['pv_'+item+'_unk_np'])
+                if item in need_onehot:
+                    inputs[item+'_onehot'] = get_one_hot_input(inputs[item+'_unk_np'])
 
         if cfg.multi_acts_training and 'aspn_aug_unk_np' in inputs:
             inputs['aspn_aug'] = cuda_(torch.from_numpy(inputs['aspn_aug_unk_np']).long())
@@ -180,6 +212,7 @@ class Model(object):
                     # if turn_num==1:
                     #     exit(0)
                     inputs = self.add_torch_input(inputs, first_turn=first_turn)
+
                     # current inputs:
                     # ['pv_resp_np', 'pv_resp_unk_np', 'pv_bspn_np', 'pv_bspn_unk_np', 'pv_aspn_np', 'pv_aspn_unk_np', 'pv_dspn_np', 'pv_dspn_unk_np', 'pv_bsdx_np', 
                     # 'pv_bsdx_unk_np', 'user_np', 'user_unk_np', 'usdx_np', 'usdx_unk_np', 'resp_np', 'resp_unk_np', 'bspn_np', 'bspn_unk_np', 'aspn_np', 'aspn_unk_np', 
@@ -217,7 +250,6 @@ class Model(object):
                     optim.step()
                     sup_loss += float(total_loss)
                     if cfg.enable_tensorboard:
-                        pdb.set_trace()
                         log_contrast_loss += 0 if not cfg.enable_contrast else float(losses['contrast'])
                         log_sup_loss = sup_loss - log_contrast_loss
                     sup_cnt += 1

@@ -337,8 +337,13 @@ class MultiWozReader(_ReaderBase):
             enc['aspn'] = self.vocab.sentence_encode(t['sys_act'].split() + ['<eos_a>'])
             enc['dspn'] = self.vocab.sentence_encode(t['turn_domain'].split() + ['<eos_d>'])
             if cfg.enable_cntfact:
-                enc['cntfact_bspn'] = self.vocab.sentence_encode(t['cntfact_constraint_max'].split() + ['<eos_b>'])
-                enc['cntfact_bsdx'] = self.vocab.sentence_encode(t['cntfact_cons_delex_max'].split() + ['<eos_b>'])
+                if cfg.enable_multi_cntfact:
+                    enc['cntfact_bspn'] = [self.vocab.sentence_encode(t['cntfact_constraint_max'][i].split() + ['<eos_b>']) for i in range(cfg.topk_cntfact)]
+                    enc['cntfact_bsdx'] = [self.vocab.sentence_encode(t['cntfact_cons_delex_max'][i].split() + ['<eos_b>']) for i in range(cfg.topk_cntfact)]
+                    pass
+                else:
+                    enc['cntfact_bspn'] = self.vocab.sentence_encode(t['cntfact_constraint_max'].split() + ['<eos_b>'])
+                    enc['cntfact_bsdx'] = self.vocab.sentence_encode(t['cntfact_cons_delex_max'].split() + ['<eos_b>'])
             
             state = t['cons_delex']
             
@@ -478,11 +483,15 @@ class MultiWozReader(_ReaderBase):
 
     def convert_batch(self, py_batch, py_prev, first_turn=False):
         inputs = {}
-        if first_turn:
+        if first_turn: #TODO: Here also need changes?
             for item, py_list in py_prev.items():
                 batch_size = len(py_batch['user'])
-                inputs[item+'_np'] = np.array([[1]] * batch_size)
-                inputs[item+'_unk_np'] = np.array([[1]] * batch_size)
+                if cfg.enable_multi_cntfact and item in ['pv_cntfact_bspn', 'pv_cntfact_bsdx']:
+                    inputs[item+'_np'] = [np.array([[1]] * batch_size) for _ in range(cfg.topk_cntfact)]
+                    inputs[item+'_unk_np'] = [np.array([[1]] * batch_size) for _ in range(cfg.topk_cntfact)]
+                else:
+                    inputs[item+'_np'] = np.array([[1]] * batch_size)
+                    inputs[item+'_unk_np'] = np.array([[1]] * batch_size)
         else:
             for item, py_list in py_prev.items():
                 if py_list is None:
@@ -493,13 +502,28 @@ class MultiWozReader(_ReaderBase):
                     continue
                 if not cfg.enable_dspn and 'dspn' in item:
                     continue
-                prev_np = utils.padSeqs(py_list, truncated=cfg.truncated, trunc_method='pre') # py_list: (batch,) prev_np: (batch, pad)
-                inputs[item+'_np'] = prev_np
-                if item in ['pv_resp', 'pv_bspn', 'pv_cntfact_bspn']:
-                    inputs[item+'_unk_np'] = deepcopy(inputs[item+'_np'])
-                    inputs[item+'_unk_np'][inputs[item+'_unk_np']>=self.vocab_size] = 2   # set word index > vocab size to <unk>
+                if cfg.enable_multi_cntfact and item in ['pv_cntfact_bspn', 'pv_cntfact_bsdx']:
+                    prev_np = [[] for _ in range(cfg.topk_cntfact)]
+                    for batch in py_list:
+                        for idx, seq in enumerate(batch):
+                            prev_np[idx].append(seq) 
+                    inputs[item+'_np'] = [[] for _ in range(cfg.topk_cntfact)] 
+                    inputs[item+'_unk_np'] = [[] for _ in range(cfg.topk_cntfact)] 
+                    for i in range(cfg.topk_cntfact):
+                        inputs[item+'_np'][i] = utils.padSeqs(prev_np[i], truncated=cfg.truncated, trunc_method='pre')
+                        if item in ['pv_resp', 'pv_bspn', 'pv_cntfact_bspn']:
+                            inputs[item+'_unk_np'][i] = deepcopy(inputs[item+'_np'][i])
+                            inputs[item+'_unk_np'][i][inputs[item+'_unk_np'][i]>=self.vocab_size] = 2   # set word index > vocab size to <unk>
+                        else:
+                            inputs[item+'_unk_np'][i] = inputs[item+'_np'][i]
                 else:
-                    inputs[item+'_unk_np'] = inputs[item+'_np']
+                    prev_np = utils.padSeqs(py_list, truncated=cfg.truncated, trunc_method='pre') # py_list: (batch,) prev_np: (batch, pad)
+                    inputs[item+'_np'] = prev_np
+                    if item in ['pv_resp', 'pv_bspn', 'pv_cntfact_bspn']:
+                        inputs[item+'_unk_np'] = deepcopy(inputs[item+'_np'])
+                        inputs[item+'_unk_np'][inputs[item+'_unk_np']>=self.vocab_size] = 2   # set word index > vocab size to <unk>
+                    else:
+                        inputs[item+'_unk_np'] = inputs[item+'_np']
         if cfg.enable_cntfact:
             inputs_keys = ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn', 'cntfact_bspn', 'cntfact_bsdx']
         else:
@@ -516,12 +540,41 @@ class MultiWozReader(_ReaderBase):
             py_list = py_batch[item]
             trunc_method = 'post' if item == 'resp' else 'pre'
             # max_length = cfg.max_nl_length if item in ['user', 'usdx', 'resp'] else cfg.max_span_length
-            inputs[item+'_np'] = utils.padSeqs(py_list, truncated=cfg.truncated, trunc_method=trunc_method)
-            if item in ['user', 'usdx', 'resp', 'bspn', 'cntfact_bspn']:
-                inputs[item+'_unk_np'] = deepcopy(inputs[item+'_np'])
-                inputs[item+'_unk_np'][inputs[item+'_unk_np']>=self.vocab_size] = 2   # <unk>
+            if cfg.enable_multi_cntfact and item in ['cntfact_bspn', 'cntfact_bsdx']:
+                # Note: here pylist [B, topK]
+                batch_size = len(py_batch['user'])
+                to_pad_np = [[] for _ in range(cfg.topk_cntfact)]
+                #to_pad_unk_np = [[] for _ in range(cfg.topk_cntfact)]
+                for batch in py_list:
+                    for idx, seq in enumerate(batch):
+                        to_pad_np[idx].append(seq)
+                inputs[item+'_np'] = [[] for _ in range(cfg.topk_cntfact)]
+                inputs[item+'_unk_np'] = [[] for _ in range(cfg.topk_cntfact)]
+                for i in range(cfg.topk_cntfact):
+                    inputs[item+'_np'][i] = utils.padSeqs(to_pad_np[i], truncated=cfg.truncated, trunc_method=trunc_method)
+                    if item in ['user', 'usdx', 'resp', 'bspn', 'cntfact_bspn']:
+                        inputs[item+'_unk_np'][i] = deepcopy(inputs[item+'_np'][i])
+                        inputs[item+'_unk_np'][i][inputs[item+'_unk_np'][i]>=self.vocab_size] = 2   # <unk>
+                    else:
+                        inputs[item+'_unk_np'][i] = inputs[item+'_np'][i]
+                '''
+                inputs[item+'_np'] = []
+                inputs[item+'_unk_np'] = []
+                for i in range(cfg.topk_cntfact):
+                    inputs[item+'_np'].append(utils.padSeqs(py_list[i], truncated=cfg.truncated, trunc_method=trunc_method))
+                    if item in ['user', 'usdx', 'resp', 'bspn', 'cntfact_bspn']:
+                        inputs[item+'_unk_np'][i] = deepcopy(inputs[item+'_np'])
+                        inputs[item+'_unk_np'][i][inputs[item+'_unk_np'][i]>=self.vocab_size] = 2   # <unk>
+                    else:
+                        inputs[item+'_unk_np'].append(inputs[item+'_np'][i])
+                '''
             else:
-                inputs[item+'_unk_np'] = inputs[item+'_np']
+                inputs[item+'_np'] = utils.padSeqs(py_list, truncated=cfg.truncated, trunc_method=trunc_method)
+                if item in ['user', 'usdx', 'resp', 'bspn', 'cntfact_bspn']:
+                    inputs[item+'_unk_np'] = deepcopy(inputs[item+'_np'])
+                    inputs[item+'_unk_np'][inputs[item+'_unk_np']>=self.vocab_size] = 2   # <unk>
+                else:
+                    inputs[item+'_unk_np'] = inputs[item+'_np']
 
         if cfg.multi_acts_training and cfg.mode=='train':
             inputs['aspn_bidx'], multi_aspn = [], []

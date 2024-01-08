@@ -94,7 +94,7 @@ class Vocab(object):
             if self._word2idx.get(word, None) is None:
                 self._add_to_vocab(word)
                 self.vocab_size_oov = len(self._idx2word)
-                logging.info(ValueError('Unknown word: %s. Vocabulary should include oovs here.'%word))
+                #logging.info(ValueError('Unknown word: %s. Vocabulary should include oovs here.'%word))
                 #raise ValueError('Unknown word: %s. Vocabulary should include oovs here.'%word)
             return self._word2idx[word]
         else:
