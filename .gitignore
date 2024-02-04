@@ -11,3 +11,4 @@ damd_multiwoz/logs/*.log
 damd_multiwoz/experiments/**
 *.tar.gz
 damd_multiwoz/data/multi-woz/data.json
+damd_multiwoz/scripts/

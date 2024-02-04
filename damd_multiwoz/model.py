@@ -18,7 +18,7 @@ import re
 from sklearn.metrics import precision_recall_fscore_support
 import pandas as pd
 import nvidia_smi
-import pdb
+import pdb, datetime
 torch.autograd.set_detect_anomaly(True)
 class Model(object):
     def __init__(self):
@@ -301,7 +301,6 @@ class Model(object):
                 self.writer.add_scalar('SupervisedLoss/train', epoch_log_sup_loss, epoch)
                 self.writer.add_scalar('ContrastLoss/train', epoch_log_contrast_loss, epoch)
                 self.writer.add_scalar('TotalLoss/train', epoch_log_total_loss, epoch)
-                pass
 
             epoch_sup_loss = sup_loss / (sup_cnt + 1e-8) # ori loss
             # do_test = True if (epoch+1)%5==0 else False
@@ -700,9 +699,10 @@ def main():
         hasher = hashlib.sha1(str(other_config).encode('utf-8'))
         hash_ = base64.urlsafe_b64encode(hasher.digest()[:10])
         hash_ = re.sub(r'[^A-Za-z]', '', str(hash_))
+        current_date = datetime.datetime.now().strftime("%Y%m%d")
         
         if cfg.exp_path in ['' , 'to be generated']:
-            cfg.exp_path = 'experiments/{}_{}_sd{}_lr{}_bs{}_sp{}_dc{}_act{}_0.05_hash{}/'.format('-'.join(cfg.exp_domains),
+            cfg.exp_path = 'experiments/{}_{}_{}_sd{}_lr{}_bs{}_sp{}_dc{}_act{}_0.05_hash{}/'.format(current_date, '-'.join(cfg.exp_domains),
                                                                                             cfg.exp_no, cfg.seed, cfg.lr, cfg.batch_size,
                                                                                             cfg.early_stop_count, cfg.weight_decay_count, cfg.enable_aspn,
                                                                                             hash_)
@@ -715,7 +715,7 @@ def main():
             cfg.vocab_path_eval = os.path.join(cfg.exp_path, 'vocab')
             if cfg.enable_tensorboard:
                 cfg.tensorboard_path = os.path.join(cfg.exp_path, 'runs')
-                logging.info('tensorboard_path {}'.format(cfg.tensorboard_path))
+                print('tensorboard_path {}'.format(cfg.tensorboard_path))
             cfg.eval_load_path = cfg.exp_path
 
     cfg._init_logging_handler(args.mode)

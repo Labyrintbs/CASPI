@@ -546,7 +546,6 @@ class MultiWozEvaluator(object):
                 reqs[domain] = goal[domain]['requestable']
 
             # print('\n',dial_id)
-            #pdb.set_trace()
             evaluated_generated_dialogue = self._evaluateGeneratedDialogue(dial, goal, reqs, counts,
                                                                     same_eval_as_cambridge=same_eval_as_cambridge,return_extra=return_extra, soft_acc=soft_acc)
             success_true = 0

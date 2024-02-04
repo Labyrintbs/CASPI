@@ -6,7 +6,6 @@ import random
 import numpy as np
 from argparse import ArgumentParser
 
-
 K=10
 TRAIN_ON=['act','resp'][0]
 GAMMA_GLOBAL = 0.0
@@ -168,7 +167,7 @@ def persist_Q_function(data_for_damds, Q_infos, state_acts, fn_tn_states, path_t
                         }
                     else:
                         act_len = max(1,len(act.split()))
-                        bh_policy = estimate_bh_policy(state_act, state, act)
+                        bh_policy = estimate_bh_policy(state_act, state, act) # same state[act]/ all state[act]
                         
                         Q_fn[fn][turn_num] = {
                             'Q':Q_info[state][act]['Q'],

@@ -25,7 +25,7 @@ import datetime
 class RewardLearning():
     
     def __init__(self, fold, seed, action_space, metric):
-        self.reward_report_template = 'reward_report_{}_{}_.*.csv'
+        self.reward_report_template = '^reward_report_{}_{}_.*.csv'
         word_embed_file_path='./damd_multiwoz/data/embeddings/glove.6B.100d.w2v.txt'
         
         self.train_val_fraction=0.8
