@@ -625,24 +625,27 @@ class MultiWozReader(_ReaderBase):
         decode_fn = self.vocab.sentence_decode
         results = []
         eos_syntax = ontology.eos_tokens if not eos_syntax else eos_syntax
-
-        if cfg.bspn_mode == 'bspn':
-            field = ['dial_id', 'turn_num', 'user', 'bspn_gen','bspn', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
+        if cfg.enable_rl:
+                field = ['dial_id', 'turn_num', 'user', 'bspn_gen','bspn', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
                         'dspn_gen', 'dspn', 'pointer']
-        elif not cfg.enable_dst and not cfg.enable_cntfact: 
-            field = ['dial_id', 'turn_num', 'user', 'bsdx_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
-                        'dspn_gen', 'dspn', 'bspn', 'pointer']
-        elif not cfg.enable_dst and cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bsdx': 
-            field = ['dial_id', 'turn_num', 'user', 'bsdx_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
-                        'dspn_gen', 'dspn', 'bspn', 'pointer', 'cntfact_bspn', 'cntfact_bsdx'] 
-        elif not cfg.enable_dst and cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn':
-            field = ['dial_id', 'turn_num', 'user', 'bspn_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
-                        'dspn_gen', 'dspn', 'bspn', 'pointer', 'cntfact_bspn', 'cntfact_bsdx'] 
         else:
-            field = ['dial_id', 'turn_num', 'user', 'bsdx_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
-                        'dspn_gen', 'dspn', 'bspn_gen','bspn', 'pointer']
-        if self.multi_acts_record is not None:
-            field.insert(7, 'multi_act_gen')
+            if cfg.bspn_mode == 'bspn':
+                field = ['dial_id', 'turn_num', 'user', 'bspn_gen','bspn', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
+                            'dspn_gen', 'dspn', 'pointer']
+            elif not cfg.enable_dst and not cfg.enable_cntfact: 
+                field = ['dial_id', 'turn_num', 'user', 'bsdx_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
+                            'dspn_gen', 'dspn', 'bspn', 'pointer']
+            elif not cfg.enable_dst and cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bsdx': 
+                field = ['dial_id', 'turn_num', 'user', 'bsdx_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
+                            'dspn_gen', 'dspn', 'bspn', 'pointer', 'cntfact_bspn', 'cntfact_bsdx'] 
+            elif not cfg.enable_dst and cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn':
+                field = ['dial_id', 'turn_num', 'user', 'bspn_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
+                            'dspn_gen', 'dspn', 'bspn', 'pointer', 'cntfact_bspn', 'cntfact_bsdx'] 
+            else:
+                field = ['dial_id', 'turn_num', 'user', 'bsdx_gen','bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn',
+                            'dspn_gen', 'dspn', 'bspn_gen','bspn', 'pointer']
+            if self.multi_acts_record is not None:
+                field.insert(7, 'multi_act_gen')
 
         for dial_id, turns in result_dict.items():
             entry = {'dial_id': dial_id, 'turn_num': len(turns)}

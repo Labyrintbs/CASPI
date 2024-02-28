@@ -11,10 +11,10 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-ratio=0.1
+ratio=5
 #data_file=data_for_damd_reward_${K}.json
-data_file=cntfact_data_for_damd_ratio_0.1.json
-
+data_file=cntfact_data_for_damd_K_5_debug.json
+#data_file=cntfact_data_for_damd_ratio_0.6.json
 if [ $metric == 'soft' ]; then
   soft_acc=True
 else
@@ -26,14 +26,17 @@ enable_aspn=True
 bspn_mode=bspn
 enable_dst=False
 use_true_curr_bspn=True
-enable_cntfact=True
+enable_cntfact=False
 enable_debug=False
-enable_contrast=True
+enable_contrast=False
 enable_tensorboard=True
+enable_multi_cntfact=False
+enable_rl=True
+
 
 root_path=./damd_multiwoz
 
-per_epoch_report_path=${root_path}/data/multi-woz-oppe/reward/debug_bspn_cntfact_reward_report_${K}_${metric}_${fold}_ratio_${ratio}_dp.csv
+per_epoch_report_path=${root_path}/data/multi-woz-oppe/reward/debug20240204_bspn_cntfact_reward_report_${K}_${metric}_${fold}_ratio_${ratio}_dp.csv
 dev_list=${root_path}/data/multi-woz-processed/rewardListFile_${K}_${fold}.json
 
 exp_name=debug_bspn_cntfact_reward_K_${K}_fold_${fold}_metric_${metric}_seed_${seed}_CntfactRatio_${ratio}
@@ -43,7 +46,7 @@ log_path=${root_path}/logs/${log_file}
 echo 'To view log tail:'${log_path}
 
 python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
-	exp_no=debug_no_aug_with_bs_with_cntfact_bspn batch_size=128 multi_acts_training=False \
+	exp_no=debug_cntfact_bspn_K_5 batch_size=128 multi_acts_training=False \
 	use_true_curr_bspn=${use_true_curr_bspn} \
 	enable_aspn=${enable_aspn} \
 	bspn_mode=${bspn_mode} \
@@ -58,4 +61,6 @@ python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
 	enable_debug=${enable_debug} \
 	enable_contrast=${enable_contrast} \
 	enable_tensorboard=${enable_tensorboard}\
+	enable_multi_cntfact=${enable_multi_cntfact}\
+	enable_rl=${enable_rl} \
 

@@ -11,9 +11,9 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-ratio=0.1
+ratio=5
 #data_file=data_for_damd_reward_${K}.json
-data_file=cntfact_data_for_damd_ratio_0.1.json
+data_file=cntfact_data_for_damd_K_5_debug.json
 
 if [ $metric == 'soft' ]; then
   soft_acc=True
@@ -29,6 +29,8 @@ use_true_curr_bspn=True
 enable_cntfact=True
 enable_debug=False
 enable_contrast=True
+enable_multi_cntfact=True
+enable_tensorboard=True
 
 root_path=./damd_multiwoz
 
@@ -42,7 +44,7 @@ log_path=${root_path}/logs/${log_file}
 echo 'To view log tail:'${log_path}
 
 python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
-	exp_no=debug_no_aug_with_bs_with_cntfact_bspn batch_size=128 multi_acts_training=False \
+	exp_no=no_aug_cntfact_K_5_bspn batch_size=128 multi_acts_training=False \
 	use_true_curr_bspn=${use_true_curr_bspn} \
 	enable_aspn=${enable_aspn} \
 	bspn_mode=${bspn_mode} \
@@ -56,4 +58,6 @@ python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
 	enable_cntfact=${enable_cntfact} \
 	enable_debug=${enable_debug} \
 	enable_contrast=${enable_contrast} \
+	enable_multi_cntfact=${enable_multi_cntfact} \
+	enable_tensorboard=${enable_tensorboard} \
 

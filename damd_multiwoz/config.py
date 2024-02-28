@@ -65,8 +65,8 @@ class _Config:
         self.label_smoothing = .0
         self.lr_decay = 0.5
         self.batch_size = 128
-        self.epoch_num = 100
-        self.early_stop_count = 6
+        self.epoch_num = 20 #100 
+        self.early_stop_count = 3 #6 
         self.weight_decay_count = 3
         self.teacher_force = 100
         self.multi_acts_training = False
@@ -116,6 +116,13 @@ class _Config:
         self.enable_contrast = False
         self.contrast_ratio = 1
         self.enable_debug = False
+
+        # rl experiment settings
+        self.enable_rl = False
+        self.gamma = 0.99 # reward discount factor
+        self.rl_factor = 0.1 
+        self.enable_bcq = False
+        self.sample_ratio = 0.1
 
     def __str__(self):
         s = ''

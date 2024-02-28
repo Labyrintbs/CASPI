@@ -28,7 +28,7 @@ enable_dst=False
 use_true_curr_bspn=True
 enable_cntfact=True
 enable_debug=False
-enable_contrast=True
+enable_contrast=False
 
 root_path=./damd_multiwoz
 
@@ -42,7 +42,7 @@ log_path=${root_path}/logs/${log_file}
 echo 'To view log tail:'${log_path}
 
 python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
-	exp_no=no_aug_with_bs_with_cntfact_bspn_contrast batch_size=128 multi_acts_training=False \
+	exp_no=no_aug_only_cntfact_1_bspn batch_size=128 multi_acts_training=False \
 	use_true_curr_bspn=${use_true_curr_bspn} \
 	enable_aspn=${enable_aspn} \
 	bspn_mode=${bspn_mode} \

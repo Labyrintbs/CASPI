@@ -167,6 +167,20 @@ class Model(object):
                     if len(np.where(copy_sources[b, :] == oov_idx)[0])==0:
                         new_labels[b, t] = 2
         return cuda_(torch.from_numpy(new_labels).long())
+    def get_turn_G(self, ids, reward_dict=None, gamma=0.99, turn_num=0):
+        '''
+        based on each turn's reward, calculate Gain and return the inputs' format result 
+
+        reward_dict[dial_id] = success, match, cntfact, reward
+        '''
+        Gs = []
+        for dial_id in ids: # make sure g matches correct dial id
+            if turn_num == 0:
+                reward_dict[dial_id][turn_num]['G'] = reward_dict[dial_id][turn_num]['reward']
+            else: 
+                reward_dict[dial_id][turn_num]['G'] = reward_dict[dial_id][turn_num]['reward'] + gamma * reward_dict[dial_id][turn_num - 1]['G']
+            Gs.append(reward_dict[dial_id][turn_num]['G'])
+        return Gs
 
     def train(self):
         lr = cfg.lr
@@ -189,6 +203,8 @@ class Model(object):
             data_iterator = self.reader.get_batches('train')
             for iter_num, dial_batch in enumerate(data_iterator):
                 hidden_states = {}
+                batch_collection = {}
+                each_dial_reward = {}
                 if cfg.enable_cntfact:
                     py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None, 'pv_cntfact_bspn': None, 'pv_cntfact_bsdx': None}
                 else:
@@ -221,7 +237,10 @@ class Model(object):
                     # 'pv_bspn_onehot', 'bspn_onehot', 'aspn', 'aspn_nounk', 'pv_aspn', 'pv_aspn_nounk', 'aspn_4loss', 'pv_aspn_onehot', 'aspn_onehot', 'bsdx', 'bsdx_nounk', 
                     # 'pv_bsdx', 'pv_bsdx_nounk', 'bsdx_4loss', 'pv_bsdx_onehot', 'bsdx_onehot'])
                     # total_loss, losses, hidden_states = self.m(inputs, hidden_states, first_turn, mode='train')
-                    total_loss, losses = self.m(inputs, hidden_states, first_turn, mode='train')
+                    if cfg.enable_rl:
+                        total_loss, losses, probs, decoded = self.m(inputs, hidden_states, first_turn, mode='rl_supervised')
+                    else:
+                        total_loss, losses = self.m(inputs, hidden_states, first_turn, mode='train')
                     # print('forward completed')
                     py_prev['pv_resp'] = turn_batch['resp']
                     if cfg.enable_bspn:
@@ -240,6 +259,66 @@ class Model(object):
                         py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx']
                         py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn']
 
+                    if cfg.enable_rl:
+                        turn_batch['resp_gen'] = decoded['resp']
+                        if cfg.bspn_mode == 'bspn' or cfg.enable_dst: #False
+                            if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn' and not cfg.enable_contrast:
+                                turn_batch['bspn_gen'] = decoded['cntfact_bspn']#decoded['bspn']
+                            else:
+                                turn_batch['bspn_gen'] = decoded['bspn']
+                        if cfg.enable_aspn:
+                            turn_batch['aspn_gen'] = decoded['aspn']
+
+                        turn_batch['pi(a|b)'] = probs['pi(a|b)']
+                        batch_collection.update(self.reader.inverse_transpose_batch(dial_batch))
+                        turn_results, _ = self.reader.wrap_result(batch_collection)
+                        '''
+                        rollouts = {}
+                        for row in results:
+                            # turn each turn list into each dial list
+                            if row['dial_id'] not in rollouts:
+                                rollouts[row['dial_id']]={}
+                            rollout = rollouts[row['dial_id']]
+                            rollout_step = {}
+                            rollout[row['turn_num']] = rollout_step
+                            
+                            rollout_step['resp'] = row['resp']
+                            rollout_step['resp_gen'] = row['resp_gen']
+                            rollout_step['aspn'] = row['aspn']
+                            
+                            #TODO: add cntfact here, which restored in reward_report.csv
+                            if 'bspn' in row:
+                                rollout_step['bspn'] = row['bspn']
+                            if 'bspn_gen' in row:
+                                rollout_step['bspn_gen'] = row['bspn_gen']
+                            
+                            rollout_step['aspn_gen'] = row['aspn_gen']
+
+                            # eval need dspn and dspn_gen
+                            rollout_step['dspn'] = turn_batch['dspn']
+                            #rollout_step['dspn_gen'] = row['dspn_gen']
+
+                        if other_config['gen_per_epoch_report']==True:
+                            bleu, success, match,req_offer_counts,stats,all_true_reqs,all_pred_reqs, success_true, all_successes, all_matches, all_bleus ,dial_ids = self.evaluator.validation_metric(results, return_rich=True, return_per_dialog=True,soft_acc=other_config['soft_acc'])
+                            for i,dial_id in enumerate(dial_ids):
+                                self.df.loc[len(self.df)] = [dial_id,all_successes[i],all_matches[i],all_bleus[i],json.dumps(rollouts[dial_id])]
+                            self.df.to_csv(other_config['per_epoch_report_path'])
+                        else:
+                        '''
+                        bleu, success, match, each_dial_reward = self.evaluator.validation_metric(turn_results, return_rich=False, return_each=True, return_dict=each_dial_reward, turn_num=turn_num)
+                        each_dial_gain = self.get_turn_G(turn_batch['dial_id'], each_dial_reward, cfg.gamma, turn_num)
+                        #print(f'current iter: {iter_num} turn: {turn_num} reward metrics: success {success}, match {match}')
+                        #print('current each dial reward:')
+                        #print(each_dial_reward)
+                        # TODO: G calculation 
+                        #print(f'each turn Gain: {each_dial_gain}')
+                        inputs['G_np'] = np.array(each_dial_gain)
+                        inputs['G_unk_np'] = inputs['G_np']
+                        inputs['G'] = cuda_(torch.from_numpy(inputs['G_unk_np']))
+                        # TODO: policy gradiant 
+                        policy_loss, losses = self.m(inputs, hidden_states, first_turn, mode='rl_policy', losses=losses, probs=probs)
+                        total_loss += policy_loss
+
                     total_loss = total_loss.mean()
                     # print('forward time:%f'%(time.time()-test_begin))
                     # test_begin = time.time()
@@ -255,6 +334,43 @@ class Model(object):
                     sup_cnt += 1
                     torch.cuda.empty_cache()
 
+
+                #nupdated after all turn finished
+                '''
+                results, _ = self.reader.wrap_result(batch_collection)
+                rollouts = {}
+                for row in results:
+                    # turn each turn list into each dial list
+                    if row['dial_id'] not in rollouts:
+                        rollouts[row['dial_id']]={}
+                    rollout = rollouts[row['dial_id']]
+                    rollout_step = {}
+                    rollout[row['turn_num']] = rollout_step
+                    
+                    rollout_step['resp'] = row['resp']
+                    rollout_step['resp_gen'] = row['resp_gen']
+                    rollout_step['aspn'] = row['aspn']
+                    
+                    #TODO: add cntfact here, which restored in reward_report.csv
+                    if 'bspn' in row:
+                        rollout_step['bspn'] = row['bspn']
+                    if 'bspn_gen' in row:
+                        rollout_step['bspn_gen'] = row['bspn_gen']
+                    
+                    rollout_step['aspn_gen'] = row['aspn_gen']
+
+                    # eval need dspn and dspn_gen
+                    rollout_step['dspn'] = turn_batch['dspn']
+                    #rollout_step['dspn_gen'] = row['dspn_gen']
+
+                if other_config['gen_per_epoch_report']==True:
+                    bleu, success, match,req_offer_counts,stats,all_true_reqs,all_pred_reqs, success_true, all_successes, all_matches, all_bleus ,dial_ids = self.evaluator.validation_metric(results, return_rich=True, return_per_dialog=True,soft_acc=other_config['soft_acc'])
+                    for i,dial_id in enumerate(dial_ids):
+                        self.df.loc[len(self.df)] = [dial_id,all_successes[i],all_matches[i],all_bleus[i],json.dumps(rollouts[dial_id])]
+                    self.df.to_csv(other_config['per_epoch_report_path'])
+                else:
+                    bleu, success, match,req_offer_counts,stats,all_true_reqs,all_pred_reqs, success_true = self.evaluator.validation_metric(results, return_rich=True)
+                '''
                 if (iter_num+1)%cfg.report_interval==0:
                     if cfg.enable_cntfact:
                         if cfg.enable_contrast:
@@ -301,6 +417,9 @@ class Model(object):
                 self.writer.add_scalar('SupervisedLoss/train', epoch_log_sup_loss, epoch)
                 self.writer.add_scalar('ContrastLoss/train', epoch_log_contrast_loss, epoch)
                 self.writer.add_scalar('TotalLoss/train', epoch_log_total_loss, epoch)
+                if cfg.enable_rl:
+                    epoch_log_gain = sum(each_dial_gain) / len(each_dial_gain)
+                    self.writer.add_scalar('G/rl', epoch_log_gain, epoch)
 
             epoch_sup_loss = sup_loss / (sup_cnt + 1e-8) # ori loss
             # do_test = True if (epoch+1)%5==0 else False
@@ -343,6 +462,8 @@ class Model(object):
 
 
     def validate(self, data='dev', do_test=False):
+        print("************* validate test **********")
+        #pdb.set_trace()
         self.m.eval()
         valid_loss, count = 0, 0
         data_iterator = self.reader.get_batches(data)
@@ -464,6 +585,8 @@ class Model(object):
         return valid_loss
 
     def eval(self, data='test'):
+        print("*********** eval test ***********")
+        #pdb.set_trace()
         self.m.eval()
         self.reader.result_file = None
         result_collection = {}
