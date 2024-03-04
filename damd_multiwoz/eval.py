@@ -6,7 +6,8 @@ import ontology
 from config import global_config as cfg
 from clean_dataset import clean_slot_values
 import pdb
-
+from sentence_transformers import SentenceTransformer, util
+import numpy as np
 
 class BLEUScorer(object):
     ## BLEU score calculator via GentScorer interface
@@ -77,6 +78,8 @@ class MultiWozEvaluator(object):
         self.test_data = self.reader.test
 
         self.bleu_scorer = BLEUScorer()
+        if cfg.enable_contrast_reward:
+            self.compare_model = SentenceTransformer('../all-MiniLM-L6-v2/')
         #self.nlp = spacy.load('en_core_web_sm')
         self.all_info_slot = []
         for d, s_list in ontology.informable_slots.items():
@@ -128,7 +131,7 @@ class MultiWozEvaluator(object):
 
         return metric_results
 
-    def validation_metric(self, data, return_rich=False, return_per_dialog=False,soft_acc=False,return_each=False, return_dict=None, turn_num=None):
+    def validation_metric(self, data, return_rich=False, return_per_dialog=False,soft_acc=False,return_each=False, return_dict=None, turn_num=None, return_contrast=False):
         bleu = self.bleu_metric(data, not_return_log=return_each)
         all_dialogid_bleus = {}
         if return_per_dialog==True:
@@ -143,7 +146,7 @@ class MultiWozEvaluator(object):
         accu_single_dom, accu_multi_dom, multi_dom_num = self.domain_eval(data)
         context_to_eval_response  = self.context_to_response_eval(data,
                                                                   same_eval_as_cambridge=cfg.same_eval_as_cambridge,return_extra=return_rich,return_for_each_dialogue=return_each,
-                                                                  soft_acc=soft_acc,return_dict=return_dict,turn_num=turn_num)
+                                                                  soft_acc=soft_acc,return_dict=return_dict,turn_num=turn_num, return_contrast=return_contrast)
         if return_rich:
             success, success_true, match, req_offer_counts, dial_num, stats, all_true_reqs, all_pred_reqs,all_successes,all_matches, dial_ids  = context_to_eval_response
                 
@@ -518,7 +521,7 @@ class MultiWozEvaluator(object):
         return total_act_num, total_slot_num
 
 
-    def context_to_response_eval(self, data, eval_dial_list = None, same_eval_as_cambridge=False,return_extra=False,return_for_each_dialogue=False,soft_acc=False,return_dict=None,turn_num=None):
+    def context_to_response_eval(self, data, eval_dial_list = None, same_eval_as_cambridge=False,return_extra=False,return_for_each_dialogue=False,soft_acc=False,return_dict=None,turn_num=None, return_contrast=False):
         dials = self.pack_dial(data)
         # data format: ['dial_id', 'turn_num', 'user', 'bsdx_gen', 'bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn', 'dspn_gen', 'dspn', 'bspn', 'pointer']
         # defined in field, MultiWozReader.wrap_result
@@ -579,7 +582,17 @@ class MultiWozEvaluator(object):
                 each_res[dial_id][turn_num]['success'] = success
                 each_res[dial_id][turn_num]['match'] = match
                 #TODO add cntfact comparison, using each dials's resp or aspn compare result
-                each_res[dial_id][turn_num]['reward'] = success * 2 + match # TODO: modify factors
+                if return_contrast:
+                    for idx, turn_dict in enumerate(dials[dial_id]):
+                        if turn_dict['turn_num'] == turn_num:
+                            gt = self.compare_model.encode(dials[dial_id][idx]['aspn'])
+                            predict = self.compare_model.encode(dials[dial_id][idx]['aspn_gen'])
+                            sim_score = float(np.dot(gt, predict))
+                            break
+                    each_res[dial_id][turn_num]['sim'] = sim_score
+                    each_res[dial_id][turn_num]['reward'] = success * 2 + match + sim_score
+                else:
+                    each_res[dial_id][turn_num]['reward'] = success * 2 + match # TODO: modify factors
             if gen_stats is None:
                 gen_stats = stats.copy()
             for domain in gen_stats.keys():

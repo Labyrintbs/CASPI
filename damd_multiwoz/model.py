@@ -18,7 +18,7 @@ import re
 from sklearn.metrics import precision_recall_fscore_support
 import pandas as pd
 import nvidia_smi
-import pdb, datetime
+import pdb, datetime, random
 torch.autograd.set_detect_anomaly(True)
 class Model(object):
     def __init__(self):
@@ -174,13 +174,24 @@ class Model(object):
         reward_dict[dial_id] = success, match, cntfact, reward
         '''
         Gs = []
+        Rs = []
         for dial_id in ids: # make sure g matches correct dial id
             if turn_num == 0:
                 reward_dict[dial_id][turn_num]['G'] = reward_dict[dial_id][turn_num]['reward']
             else: 
                 reward_dict[dial_id][turn_num]['G'] = reward_dict[dial_id][turn_num]['reward'] + gamma * reward_dict[dial_id][turn_num - 1]['G']
             Gs.append(reward_dict[dial_id][turn_num]['G'])
-        return Gs
+            Rs.append(reward_dict[dial_id][turn_num]['reward'])
+        return Rs, Gs
+    def update_cntfact_r(self, ids, reward_dict=None, cntfact_penalty=-1):
+        '''
+        add cntfact reward into success and match reward if current turn enabled cntfact bspn
+        '''
+        for dial_id in ids:
+            for turn_num in reward_dict[dial_id]:
+                reward_dict[dial_id][turn_num]['cntfact'] = cntfact_penalty
+                reward_dict[dial_id][turn_num]['reward'] += cntfact_penalty
+        return reward_dict
 
     def train(self):
         lr = cfg.lr
@@ -189,6 +200,7 @@ class Model(object):
         train_time = 0
         sw = time.time()
 
+        rl_step = 0
         for epoch in range(cfg.epoch_num):
             if epoch <= self.base_epoch:
                 continue
@@ -210,12 +222,19 @@ class Model(object):
                 else:
                     py_prev = {'pv_resp': None, 'pv_bspn': None, 'pv_aspn':None, 'pv_dspn': None, 'pv_bsdx': None}
                 bgt = time.time()
+                if cfg.enable_cntfact_reward:
+                    cntfact_index = random.randint(0, cfg.topk_cntfact-1)  # fix the same cntfact batch for an episode
                 for turn_num, turn_batch in enumerate(dial_batch): # turn_batch: list of batch's number of dict, ['dial_id', 'user', 'usdx', 'resp', 'bspn', 'bsdx', 'aspn', 'dspn', 'pointer', 'input_pointer', 'turn_domain', 'turn_num']
                     # print('turn %d'%turn_num)
                     # print(len(turn_batch['dial_id'])) 
                     optim.zero_grad()
                     first_turn = (turn_num==0)
+                    if cfg.enable_cntfact_reward: #TODO: test a batch or a turn's cntfact reward better
+                        cntfact_activate = (cfg.sample_ratio >= random.random())
                     inputs = self.reader.convert_batch(turn_batch, py_prev, first_turn=first_turn) 
+                    if cfg.enable_cntfact_reward and cntfact_activate:
+                        inputs[cfg.bspn_mode+'_np']= inputs[cfg.cntfact_bspn_mode+'_np'][cntfact_index]
+                        inputs[cfg.bspn_mode+'_unk_np']= inputs[cfg.cntfact_bspn_mode+'_unk_np'][cntfact_index]
                     # current inputs:
                     # ['pv_resp_np', 'pv_resp_unk_np', 'pv_bspn_np', 'pv_bspn_unk_np', 'pv_aspn_np', 'pv_aspn_unk_np', 'pv_dspn_np', 'pv_dspn_unk_np', 'pv_bsdx_np', 
                     # 'pv_bsdx_unk_np', 'user_np', 'user_unk_np', 'usdx_np', 'usdx_unk_np', 'resp_np', 'resp_unk_np', 'bspn_np', 'bspn_unk_np', 'aspn_np', 'aspn_unk_np', 
@@ -262,7 +281,7 @@ class Model(object):
                     if cfg.enable_rl:
                         turn_batch['resp_gen'] = decoded['resp']
                         if cfg.bspn_mode == 'bspn' or cfg.enable_dst: #False
-                            if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn' and not cfg.enable_contrast:
+                            if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn' and not cfg.enable_contrast and not cfg.enable_cntfact_reward:
                                 turn_batch['bspn_gen'] = decoded['cntfact_bspn']#decoded['bspn']
                             else:
                                 turn_batch['bspn_gen'] = decoded['bspn']
@@ -306,7 +325,10 @@ class Model(object):
                         else:
                         '''
                         bleu, success, match, each_dial_reward = self.evaluator.validation_metric(turn_results, return_rich=False, return_each=True, return_dict=each_dial_reward, turn_num=turn_num)
-                        each_dial_gain = self.get_turn_G(turn_batch['dial_id'], each_dial_reward, cfg.gamma, turn_num)
+                        #bleu, success, match, each_dial_reward = self.evaluator.validation_metric(turn_results, return_rich=False, return_each=True, return_dict=each_dial_reward, turn_num=turn_num, return_contrast=cntfact_active)
+                        if cntfact_activate:
+                            each_dial_reward = self.update_cntfact_r(turn_batch['dial_id'], each_dial_reward, cfg.cntfact_penalty)
+                        reward_log, each_dial_gain = self.get_turn_G(turn_batch['dial_id'], each_dial_reward, cfg.gamma, turn_num)
                         #print(f'current iter: {iter_num} turn: {turn_num} reward metrics: success {success}, match {match}')
                         #print('current each dial reward:')
                         #print(each_dial_reward)
@@ -318,6 +340,13 @@ class Model(object):
                         # TODO: policy gradiant 
                         policy_loss, losses = self.m(inputs, hidden_states, first_turn, mode='rl_policy', losses=losses, probs=probs)
                         total_loss += policy_loss
+                        #if cfg.enable_rl and cfg.enable_tensorboard:
+                            #print(f'********** iter {iter_num} turn {turn_num} ***********')
+                            #print(f'epoch reward {reward_log}')
+                            #step_log_reward = sum(reward_log) / len(reward_log)
+                            #print(f'average reward {step_log_reward}')
+                            #self.writer.add_scalar('G/rl', step_log_reward, rl_step)
+                            #rl_step += 1
 
                     total_loss = total_loss.mean()
                     # print('forward time:%f'%(time.time()-test_begin))
@@ -381,6 +410,15 @@ class Model(object):
                                                                             grad,
                                                                             time.time()-btm,
                                                                             turn_num+1))
+                        elif cfg.enable_cntfact_reward:
+                            logging.info(
+                                    'iter:{} [total|reward|bspn|aspn|resp] loss: {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} grad:{:.2f} time: {:.1f} turn:{} '.format(iter_num+1,
+                                                                            float(total_loss),
+                                                                            float(sum(each_dial_gain) / len(each_dial_gain)), float(losses[cfg.bspn_mode]), float(losses['aspn']),float(losses['resp']),
+                                                                            grad,
+                                                                            time.time()-btm,
+                                                                            turn_num+1))
+
                         else:
                             logging.info(
                                     'iter:{} [total|cntfact_bspn|bspn|aspn|resp] loss: {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} grad:{:.2f} time: {:.1f} turn:{} '.format(iter_num+1,
@@ -427,7 +465,7 @@ class Model(object):
             valid_loss = self.validate(do_test=do_test)
             if cfg.enable_tensorboard:
                 self.writer.add_scalar('Score/valid', 130 - valid_loss, epoch)
-            logging.info('epoch: %d, train loss: %.3f, valid loss: %.3f, total time: %.1fmin' % (epoch+1, epoch_sup_loss,
+            logging.info('epoch: %d, sup loss: %.3f, train loss: %.3f, valid loss: %.3f, total time: %.1fmin' % (epoch+1, sup_loss, epoch_sup_loss,
                     valid_loss, (time.time()-sw)/60))
             # self.save_model(epoch)
             if valid_loss <= prev_min_loss:
@@ -512,20 +550,20 @@ class Model(object):
                     decoded = self.m(inputs, hidden_states, first_turn, mode='test')
                     turn_batch['resp_gen'] = decoded['resp']
                     if cfg.bspn_mode == 'bspn' or cfg.enable_dst: #False
-                        if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn' and not cfg.enable_contrast:
+                        if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn' and not cfg.enable_contrast and not cfg.enable_cntfact_reward:
                             turn_batch['bspn_gen'] = decoded['cntfact_bspn']#decoded['bspn']
                         else:
                             turn_batch['bspn_gen'] = decoded['bspn']
                     if cfg.enable_aspn:
                         turn_batch['aspn_gen'] = decoded['aspn']
                     py_prev['pv_resp'] = turn_batch['resp'] if cfg.use_true_pv_resp else decoded['resp']
-                    if cfg.enable_bspn and not cfg.enable_cntfact:
+                    if cfg.enable_bspn and not cfg.enable_cntfact or cfg.enable_cntfact_reward:
                         py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode] # py_prev['pv_bsdx'] = turn_batch['bsdx']
                         py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn'] # True
-                    if cfg.enable_cntfact and not cfg.enable_contrast:
+                    elif cfg.enable_cntfact and not cfg.enable_contrast:
                         py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx'] if cfg.use_true_prev_bspn or 'cntfact_bsdx' not in decoded else decoded['cntfact_bsdx'] 
                         py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
-                    if cfg.enable_contrast:
+                    elif cfg.enable_contrast:
                         py_prev['pv_bsdx'] = turn_batch['bsdx'] if cfg.use_true_prev_bspn or 'bsdx' not in decoded else decoded['bsdx'] 
                         py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
                         py_prev['pv_cntfact_bsdx'] = turn_batch['cntfact_bsdx'] if cfg.use_true_prev_bspn or 'cntfact_bsdx' not in decoded else decoded['cntfact_bsdx'] 
@@ -614,10 +652,10 @@ class Model(object):
                 #if cfg.bspn_mode == 'bsdx':
                 if cfg.bspn_mode == 'bsdx' and not cfg.enable_cntfact:
                     turn_batch['bsdx_gen'] = decoded['bsdx'] if cfg.enable_bspn else [[0]] * len(decoded['resp']) #TODO: verify the effect of bsdx, bspn here.
-                if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bsdx' and not cfg.enable_contrast:
+                elif cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bsdx' and not cfg.enable_contrast and not cfg.enable_cntfact_reward:
                     turn_batch['bsdx_gen'] = decoded['cntfact_bsdx'] if cfg.enable_bspn else [[0]] * len(decoded['resp']) #TODO: verify the effect of bsdx, bspn here.
-                if cfg.bspn_mode == 'bspn' or cfg.enable_dst:
-                    if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn' and not cfg.enable_contrast:
+                elif cfg.bspn_mode == 'bspn' or cfg.enable_dst:
+                    if cfg.enable_cntfact and cfg.cntfact_bspn_mode == 'cntfact_bspn' and not cfg.enable_contrast and not cfg.enable_cntfact_reward:
                         turn_batch['bspn_gen'] = decoded['cntfact_bspn'] if cfg.enable_bspn else [[0]] * len(decoded['resp'])
                     else:
                         turn_batch['bspn_gen'] = decoded['bspn'] if cfg.enable_bspn else [[0]] * len(decoded['resp'])
@@ -638,13 +676,13 @@ class Model(object):
                 #         print('aspn:', self.reader.vocab.sentence_decode(decoded['aspn'][i][b] , eos='<eos_a>', indicate_oov=True))
 
                 py_prev['pv_resp'] = turn_batch['resp'] if cfg.use_true_pv_resp else decoded['resp']
-                if cfg.enable_bspn and not cfg.enable_cntfact:
+                if cfg.enable_bspn and not cfg.enable_cntfact or cfg.enable_cntfact_reward:
                     py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode]
                     py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
-                if cfg.enable_cntfact and not cfg.enable_contrast:
+                elif cfg.enable_cntfact and not cfg.enable_contrast:
                     py_prev['pv_'+cfg.cntfact_bspn_mode] = turn_batch[cfg.cntfact_bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.cntfact_bspn_mode]
                     py_prev['pv_cntfact_bspn'] = turn_batch['cntfact_bspn'] if cfg.use_true_prev_bspn or 'cntfact_bspn' not in decoded else decoded['cntfact_bspn']
-                if cfg.enable_contrast:
+                elif cfg.enable_contrast:
                     py_prev['pv_'+cfg.bspn_mode] = turn_batch[cfg.bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.bspn_mode]
                     py_prev['pv_bspn'] = turn_batch['bspn'] if cfg.use_true_prev_bspn or 'bspn' not in decoded else decoded['bspn']
                     #py_prev['pv_'+cfg.cntfact_bspn_mode] = turn_batch[cfg.cntfact_bspn_mode] if cfg.use_true_prev_bspn else decoded[cfg.cntfact_bspn_mode]

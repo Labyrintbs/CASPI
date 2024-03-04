@@ -729,21 +729,29 @@ class ActSpanDecoder(nn.Module):
         if first_step:
             self.mask_usdx = (inputs['usdx']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
             self.mask_pvaspn = (inputs['pv_aspn']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            if cfg.enable_bspn and not cfg.enable_cntfact:
+            if cfg.enable_cntfact_reward:
                 self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            if cfg.enable_cntfact and not cfg.enable_contrast:
+            elif cfg.enable_bspn and not cfg.enable_cntfact:
+                self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+            elif cfg.enable_cntfact and not cfg.enable_contrast:
                 self.mask_bspn = (inputs[cfg.cntfact_bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            if cfg.enable_contrast:
+            elif cfg.enable_contrast:
+                self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)
+            else:
                 self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)
             if cfg.enable_dspn: 
                 self.mask_dspn = (inputs['dspn']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
         if mode == 'test' and not first_step:
             self.mask_pvaspn = (inputs['pv_aspn']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            if cfg.enable_bspn and not cfg.enable_cntfact:
+            if cfg.enable_cntfact_reward:
                 self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            if cfg.enable_cntfact and not cfg.enable_contrast:
+            elif cfg.enable_bspn and not cfg.enable_cntfact:
+                self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+            elif cfg.enable_cntfact and not cfg.enable_contrast:
                 self.mask_bspn = (inputs[cfg.cntfact_bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            if cfg.enable_contrast:
+            elif cfg.enable_contrast:
+                self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+            else:
                 self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
             if cfg.enable_dspn:
                 self.mask_dspn = (inputs['dspn']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
@@ -756,7 +764,7 @@ class ActSpanDecoder(nn.Module):
         gru_input.append(context_usdx)
         if cfg.enable_bspn:
             if bidx is None:
-                if not cfg.enable_cntfact or cfg.enable_contrast:
+                if not cfg.enable_cntfact or cfg.enable_contrast or cfg.enable_cntfact_reward:
                     context_bspn = self.attn_bspn(dec_last_h, hidden_states[cfg.bspn_mode], self.mask_bspn)
                 else:
                     context_bspn = self.attn_bspn(dec_last_h, hidden_states[cfg.cntfact_bspn_mode], self.mask_bspn)
@@ -812,7 +820,7 @@ class ActSpanDecoder(nn.Module):
         raw_scores.append(raw_gen_score)
         # print('raw_gen_score:' , raw_gen_score.cpu().detach().numpy()[0,:3, 0:40])
 
-        if cfg.enable_bspn and not cfg.enable_cntfact:
+        if cfg.enable_bspn and not cfg.enable_cntfact or cfg.enable_cntfact_reward:
             if bidx is None:
                 raw_cp_score_bspn = self.cp_bspn(hidden_states[cfg.bspn_mode], dec_hs)   #[B,Tb]
                 raw_cp_score_bspn.masked_fill_(self.mask_bspn.repeat(1,Tdec,1), -1e20)
@@ -827,7 +835,7 @@ class ActSpanDecoder(nn.Module):
                 input_idx_oov.append(inputs[cfg.bspn_mode + '_nounk'][bidx])
             # print('raw_cp_score_bspn:' , raw_cp_score_bspn.cpu().detach().numpy()[0,:3, 0:40])
 
-        if cfg.enable_cntfact and not cfg.enable_contrast:
+        elif cfg.enable_cntfact and not cfg.enable_contrast:
             if bidx is None:
                 raw_cp_score_bspn = self.cp_bspn(hidden_states[cfg.cntfact_bspn_mode], dec_hs)   #[B,Tb]
                 raw_cp_score_bspn.masked_fill_(self.mask_bspn.repeat(1,Tdec,1), -1e20)
@@ -841,7 +849,7 @@ class ActSpanDecoder(nn.Module):
                 word_onehot_input.append(inputs[cfg.cntfact_bspn_mode + '_onehot'][bidx])
                 input_idx_oov.append(inputs[cfg.cntfact_bspn_mode + '_nounk'][bidx])
         
-        if cfg.enable_contrast:
+        elif cfg.enable_contrast:
             if bidx is None:
                 raw_cp_score_bspn = self.cp_bspn(hidden_states[cfg.bspn_mode], dec_hs)   #[B,Tb]
                 raw_cp_score_bspn.masked_fill_(self.mask_bspn.repeat(1,Tdec,1), -1e20)
@@ -941,20 +949,24 @@ class ResponseDecoder(nn.Module):
 
         if first_step:
             self.mask_usdx = (inputs['usdx']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            if cfg.enable_bspn and not cfg.enable_cntfact:
+            if cfg.enable_bspn and not cfg.enable_cntfact or cfg.enable_cntfact_reward:
                 self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            if cfg.enable_cntfact and not cfg.enable_contrast:
+            elif cfg.enable_cntfact and not cfg.enable_contrast:
                 self.mask_bspn = (inputs[cfg.cntfact_bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            if cfg.enable_contrast:
+            elif cfg.enable_contrast:
+                self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+            else:
                 self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
             if cfg.enable_aspn:
                 self.mask_aspn = (inputs['aspn']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
         if mode == 'test' and not first_step:
-            if cfg.enable_bspn and not cfg.enable_cntfact:
+            if cfg.enable_bspn and not cfg.enable_cntfact or cfg.enable_cntfact_reward:
                 self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            if cfg.enable_cntfact and not cfg.enable_contrast:
+            elif cfg.enable_cntfact and not cfg.enable_contrast:
                 self.mask_bspn = (inputs[cfg.cntfact_bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
-            if cfg.enable_contrast:
+            elif cfg.enable_contrast:
+                self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
+            else:
                 self.mask_bspn = (inputs[cfg.bspn_mode]==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
             if cfg.enable_aspn:
                 self.mask_aspn = (inputs['aspn']==0).unsqueeze(1)#.to(dec_last_w.device)     # [B,1,T]
@@ -962,15 +974,19 @@ class ResponseDecoder(nn.Module):
         context_usdx = self.attn_usdx(dec_last_h, hidden_states['usdx'], self.mask_usdx)
         # context_usdx = self.attn_usdx(dec_last_h, husdx, self.mask_usdx)
         gru_input.append(context_usdx)
-        if cfg.enable_bspn and not cfg.enable_cntfact:
+        if cfg.enable_bspn and not cfg.enable_cntfact or cfg.enable_cntfact_reward:
             context_bspn = self.attn_bspn(dec_last_h, hidden_states[cfg.bspn_mode], self.mask_bspn)
             # context_bspn = self.attn_bspn(dec_last_h, hbspn, self.mask_bspn)
             gru_input.append(context_bspn)
-        if cfg.enable_cntfact and not cfg.enable_contrast:
+        elif cfg.enable_cntfact and not cfg.enable_contrast:
             context_bspn = self.attn_bspn(dec_last_h, hidden_states[cfg.cntfact_bspn_mode], self.mask_bspn)
             # context_bspn = self.attn_bspn(dec_last_h, hbspn, self.mask_bspn)
             gru_input.append(context_bspn)
-        if cfg.enable_contrast:
+        elif cfg.enable_contrast:
+            context_bspn = self.attn_bspn(dec_last_h, hidden_states[cfg.bspn_mode], self.mask_bspn)
+            # context_bspn = self.attn_bspn(dec_last_h, hbspn, self.mask_bspn)
+            gru_input.append(context_bspn)
+        else:
             context_bspn = self.attn_bspn(dec_last_h, hidden_states[cfg.bspn_mode], self.mask_bspn)
             # context_bspn = self.attn_bspn(dec_last_h, hbspn, self.mask_bspn)
             gru_input.append(context_bspn)
@@ -1008,7 +1024,7 @@ class ResponseDecoder(nn.Module):
         word_onehot_input.append(inputs['usdx_onehot'])
         input_idx_oov.append(inputs['usdx_nounk'])
 
-        if cfg.enable_bspn and not cfg.enable_cntfact:
+        if cfg.enable_bspn and not cfg.enable_cntfact or cfg.enable_cntfact_reward:
             raw_cp_score_bspn = self.cp_bspn(hidden_states[cfg.bspn_mode], dec_hs)   #[B,Tb]
             raw_cp_score_bspn.masked_fill_(self.mask_bspn.repeat(1,Tdec,1), -1e20)
             raw_scores.append(raw_cp_score_bspn)
@@ -1016,13 +1032,19 @@ class ResponseDecoder(nn.Module):
             input_idx_oov.append(inputs[cfg.bspn_mode + '_nounk'])
             # print('raw_cp_score_bspn:' , raw_cp_score_bspn.cpu().detach().numpy()[0,:3, 0:40])
 
-        if cfg.enable_cntfact and not cfg.enable_contrast:
+        elif cfg.enable_cntfact and not cfg.enable_contrast:
             raw_cp_score_bspn = self.cp_bspn(hidden_states[cfg.cntfact_bspn_mode], dec_hs)   #[B,Tb]
             raw_cp_score_bspn.masked_fill_(self.mask_bspn.repeat(1,Tdec,1), -1e20)
             raw_scores.append(raw_cp_score_bspn)
             word_onehot_input.append(inputs[cfg.cntfact_bspn_mode + '_onehot'])
             input_idx_oov.append(inputs[cfg.cntfact_bspn_mode + '_nounk'])
-        if cfg.enable_contrast:
+        elif cfg.enable_contrast:
+            raw_cp_score_bspn = self.cp_bspn(hidden_states[cfg.bspn_mode], dec_hs)   #[B,Tb]
+            raw_cp_score_bspn.masked_fill_(self.mask_bspn.repeat(1,Tdec,1), -1e20)
+            raw_scores.append(raw_cp_score_bspn)
+            word_onehot_input.append(inputs[cfg.bspn_mode + '_onehot'])
+            input_idx_oov.append(inputs[cfg.bspn_mode + '_nounk'])
+        else:
             raw_cp_score_bspn = self.cp_bspn(hidden_states[cfg.bspn_mode], dec_hs)   #[B,Tb]
             raw_cp_score_bspn.masked_fill_(self.mask_bspn.repeat(1,Tdec,1), -1e20)
             raw_scores.append(raw_cp_score_bspn)
@@ -1109,7 +1131,7 @@ class DAMD(nn.Module):
             self.bspn_decoder = BeliefSpanDecoder(self.embedding, self.vsize_oov, cfg.bspn_mode,
                                                                              Wgen = Wgen, dropout = self.dropout)
             self.decoders[cfg.bspn_mode] = self.bspn_decoder
-        if cfg.enable_cntfact:
+        if cfg.enable_cntfact and not cfg.enable_cntfact_reward:
             self.cntfact_bspn_decoder = CntfactBeliefSpanDecoder(self.embedding, self.vsize_oov, cfg.cntfact_bspn_mode,
                                                                             Wgen = Wgen, dropout = self.dropout)
             self.decoders[cfg.cntfact_bspn_mode] = self.cntfact_bspn_decoder
@@ -1640,18 +1662,18 @@ class DAMD(nn.Module):
             hidden_states['dspn'] = dspn_enc
             hidden_states, probs = train_decode('dspn', usdx_enc_last_h, hidden_states, probs)
 
-        if cfg.enable_bspn and not cfg.enable_cntfact: # true
+        if cfg.enable_bspn and not cfg.enable_cntfact or cfg.enable_cntfact_reward: # true
             bspn_enc, _ = self.span_encoder(inputs['pv_'+cfg.bspn_mode]) # pv_bsdx
             hidden_states[cfg.bspn_mode] = bspn_enc
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h #cfg.bspn_mode='bsdx'
             hidden_states, probs = train_decode(cfg.bspn_mode, init_hidden, hidden_states, probs) # hidden_states: dict ['user', 'usdx', 'resp', 'bsdx']; prob: dict ['bsdx']
         
-        if cfg.enable_cntfact and not cfg.enable_contrast: # true
+        elif cfg.enable_cntfact and not cfg.enable_contrast: # true
             cntfact_bspn_enc, _ = self.span_encoder(inputs['pv_'+cfg.cntfact_bspn_mode]) # compare with bspn
             hidden_states[cfg.cntfact_bspn_mode] = cntfact_bspn_enc
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h #cfg.bspn_mode='bsdx'
             hidden_states, probs = train_decode(cfg.cntfact_bspn_mode, init_hidden, hidden_states, probs) 
-        if cfg.enable_contrast:
+        elif cfg.enable_contrast:
             bspn_enc, _ = self.span_encoder(inputs['pv_'+cfg.bspn_mode]) # compare with bspn
             hidden_states[cfg.bspn_mode] = bspn_enc
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h #cfg.bspn_mode='bsdx'
@@ -1868,18 +1890,18 @@ class DAMD(nn.Module):
             hidden_states['dspn'] = dspn_enc
             hidden_states, probs, decoded = train_decode('dspn', usdx_enc_last_h, hidden_states, probs, decoded)
 
-        if cfg.enable_bspn and not cfg.enable_cntfact: # true
+        if cfg.enable_bspn and not cfg.enable_cntfact or cfg.enable_cntfact_reward: # true
             bspn_enc, _ = self.span_encoder(inputs['pv_'+cfg.bspn_mode]) # pv_bsdx
             hidden_states[cfg.bspn_mode] = bspn_enc
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h #cfg.bspn_mode='bsdx'
             hidden_states, probs, decoded = train_decode(cfg.bspn_mode, init_hidden, hidden_states, probs, decoded) # hidden_states: dict ['user', 'usdx', 'resp', 'bsdx']; prob: dict ['bsdx']
         
-        if cfg.enable_cntfact and not cfg.enable_contrast: # true
+        elif cfg.enable_cntfact and not cfg.enable_contrast: # true
             cntfact_bspn_enc, _ = self.span_encoder(inputs['pv_'+cfg.cntfact_bspn_mode]) # compare with bspn
             hidden_states[cfg.cntfact_bspn_mode] = cntfact_bspn_enc
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h #cfg.bspn_mode='bsdx'
             hidden_states, probs, decoded = train_decode(cfg.cntfact_bspn_mode, init_hidden, hidden_states, probs, decoded) 
-        if cfg.enable_contrast:
+        elif cfg.enable_contrast:
             bspn_enc, _ = self.span_encoder(inputs['pv_'+cfg.bspn_mode]) # compare with bspn
             hidden_states[cfg.bspn_mode] = bspn_enc
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h #cfg.bspn_mode='bsdx'
@@ -1954,7 +1976,7 @@ class DAMD(nn.Module):
             hs['dspn'] = dspn_enc
             hs, decoded = self.greedy_decode('dspn', usdx_enc_last_h, first_turn, inputs, hs, decoded)
 
-        if cfg.enable_bspn and not cfg.enable_cntfact:
+        if cfg.enable_bspn and not cfg.enable_cntfact or cfg.enable_cntfact_reward:
             bspn_enc, bspn_enc_last_h = self.span_encoder(inputs['pv_'+cfg.bspn_mode])
             hs[cfg.bspn_mode] = bspn_enc
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h
@@ -1968,7 +1990,7 @@ class DAMD(nn.Module):
                     inputs['db_np'][bi, :cfg.pointer_dim-2] = db_ptr
                 inputs['db'] = cuda_(torch.from_numpy(inputs['db_np']).float())
 
-        if cfg.enable_cntfact and not cfg.enable_contrast:
+        elif cfg.enable_cntfact and not cfg.enable_contrast:
             cntfact_bspn_enc, cntfact_bspn_enc_last_h = self.span_encoder(inputs['pv_'+cfg.cntfact_bspn_mode])
             hs[cfg.cntfact_bspn_mode] = cntfact_bspn_enc
             init_hidden = user_enc_last_h if cfg.cntfact_bspn_mode == 'cntfact_bspn' else usdx_enc_last_h
@@ -1982,7 +2004,7 @@ class DAMD(nn.Module):
                     inputs['db_np'][bi, :cfg.pointer_dim-2] = db_ptr
                 inputs['db'] = cuda_(torch.from_numpy(inputs['db_np']).float())
 
-        if cfg.enable_contrast:
+        elif cfg.enable_contrast:
             bspn_enc, bspn_enc_last_h = self.span_encoder(inputs['pv_'+cfg.bspn_mode])
             hs[cfg.bspn_mode] = bspn_enc
             init_hidden = user_enc_last_h if cfg.bspn_mode == 'bspn' else usdx_enc_last_h

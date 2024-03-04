@@ -121,8 +121,10 @@ class _Config:
         self.enable_rl = False
         self.gamma = 0.99 # reward discount factor
         self.rl_factor = 0.1 
-        self.enable_bcq = False
+        self.enable_cntfact_reward = False
+        self.enable_contrast_reward = False
         self.sample_ratio = 0.1
+        self.cntfact_penalty = -0.1
 
     def __str__(self):
         s = ''

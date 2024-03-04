@@ -524,7 +524,7 @@ class MultiWozReader(_ReaderBase):
                         inputs[item+'_unk_np'][inputs[item+'_unk_np']>=self.vocab_size] = 2   # set word index > vocab size to <unk>
                     else:
                         inputs[item+'_unk_np'] = inputs[item+'_np']
-        if cfg.enable_cntfact:
+        if cfg.enable_cntfact or cfg.enable_cntfact_reward:
             inputs_keys = ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn', 'cntfact_bspn', 'cntfact_bsdx']
         else:
             inputs_keys = ['user', 'usdx', 'resp', 'bspn', 'aspn', 'bsdx', 'dspn'] 
