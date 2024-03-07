@@ -231,6 +231,8 @@ class Model(object):
                     first_turn = (turn_num==0)
                     if cfg.enable_cntfact_reward: #TODO: test a batch or a turn's cntfact reward better
                         cntfact_activate = (cfg.sample_ratio >= random.random())
+                    else:
+                        cntfact_activate = False
                     inputs = self.reader.convert_batch(turn_batch, py_prev, first_turn=first_turn) 
                     if cfg.enable_cntfact_reward and cntfact_activate:
                         inputs[cfg.bspn_mode+'_np']= inputs[cfg.cntfact_bspn_mode+'_np'][cntfact_index]
@@ -324,7 +326,8 @@ class Model(object):
                             self.df.to_csv(other_config['per_epoch_report_path'])
                         else:
                         '''
-                        bleu, success, match, each_dial_reward = self.evaluator.validation_metric(turn_results, return_rich=False, return_each=True, return_dict=each_dial_reward, turn_num=turn_num)
+                        use_contrast = cntfact_activate and cfg.enable_contrast_reward
+                        bleu, success, match, each_dial_reward = self.evaluator.validation_metric(turn_results, return_rich=False, return_each=True, return_dict=each_dial_reward, turn_num=turn_num, return_contrast=use_contrast)
                         #bleu, success, match, each_dial_reward = self.evaluator.validation_metric(turn_results, return_rich=False, return_each=True, return_dict=each_dial_reward, turn_num=turn_num, return_contrast=cntfact_active)
                         if cntfact_activate:
                             each_dial_reward = self.update_cntfact_r(turn_batch['dial_id'], each_dial_reward, cfg.cntfact_penalty)

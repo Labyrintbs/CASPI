@@ -585,8 +585,8 @@ class MultiWozEvaluator(object):
                 if return_contrast:
                     for idx, turn_dict in enumerate(dials[dial_id]):
                         if turn_dict['turn_num'] == turn_num:
-                            gt = self.compare_model.encode(dials[dial_id][idx]['aspn'])
-                            predict = self.compare_model.encode(dials[dial_id][idx]['aspn_gen'])
+                            gt = self.compare_model.encode(dials[dial_id][idx]['aspn'], show_progress_bar=False)
+                            predict = self.compare_model.encode(dials[dial_id][idx]['aspn_gen'], show_progress_bar=False)
                             sim_score = float(np.dot(gt, predict))
                             break
                     each_res[dial_id][turn_num]['sim'] = sim_score
