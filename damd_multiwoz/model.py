@@ -5,9 +5,10 @@ import torch
 from torch.optim import Adam
 
 import utils
+from utils import ReplayBuffer, merge_turn_buffer, add_reward_buffer
 from config import global_config as cfg
 from reader import MultiWozReader
-from damd_net import DAMD, cuda_, get_one_hot_input
+from damd_net import DAMD, BCQ,  cuda_, get_one_hot_input
 from eval import MultiWozEvaluator
 from torch.utils.tensorboard import SummaryWriter
 from otherconfig import *
@@ -19,12 +20,17 @@ from sklearn.metrics import precision_recall_fscore_support
 import pandas as pd
 import nvidia_smi
 import pdb, datetime, random
+from copy import deepcopy
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 torch.autograd.set_detect_anomaly(True)
 class Model(object):
-    def __init__(self):
+    def __init__(self, bcq_model=None):
         self.reader = MultiWozReader()
         if len(cfg.cuda_device)==1:
-            self.m =DAMD(self.reader)
+            if bcq_model is not None:
+                self.m = DAMD(self.reader, bcq_model)
+            else:
+                self.m =DAMD(self.reader)
         else:
             m = DAMD(self.reader)
             self.m=torch.nn.DataParallel(m, device_ids=cfg.cuda_device)
@@ -198,9 +204,13 @@ class Model(object):
         prev_min_loss, early_stop_count = 1 << 30, cfg.early_stop_count
         weight_decay_count = cfg.weight_decay_count
         train_time = 0
-        sw = time.time()
+        sw = time.time()         
 
         rl_step = 0
+        if cfg.generate_bcq:
+            replay_buffer = ReplayBuffer(cfg.batch_size)
+        else:
+            replay_buffer = None
         for epoch in range(cfg.epoch_num):
             if epoch <= self.base_epoch:
                 continue
@@ -326,12 +336,28 @@ class Model(object):
                             self.df.to_csv(other_config['per_epoch_report_path'])
                         else:
                         '''
+
                         use_contrast = cntfact_activate and cfg.enable_contrast_reward
-                        bleu, success, match, each_dial_reward = self.evaluator.validation_metric(turn_results, return_rich=False, return_each=True, return_dict=each_dial_reward, turn_num=turn_num, return_contrast=use_contrast)
+                        if cfg.generate_bcq:
+                            bleu, success, match, each_dial_reward, crt_turn_buffer = self.evaluator.validation_metric(turn_results, return_rich=False, return_each=True, return_dict=each_dial_reward, turn_num=turn_num, return_contrast=use_contrast, return_buffer=True)
+
+                        else:
+                            bleu, success, match, each_dial_reward = self.evaluator.validation_metric(turn_results, return_rich=False, return_each=True, return_dict=each_dial_reward, turn_num=turn_num, return_contrast=use_contrast)
                         #bleu, success, match, each_dial_reward = self.evaluator.validation_metric(turn_results, return_rich=False, return_each=True, return_dict=each_dial_reward, turn_num=turn_num, return_contrast=cntfact_active)
                         if cntfact_activate:
                             each_dial_reward = self.update_cntfact_r(turn_batch['dial_id'], each_dial_reward, cfg.cntfact_penalty)
                         reward_log, each_dial_gain = self.get_turn_G(turn_batch['dial_id'], each_dial_reward, cfg.gamma, turn_num)
+                        # TODO: use sentinel to save prev_turn_buffer, write a func to merge the two, and update in replay_buffer
+                        if cfg.generate_bcq:
+                            crt_turn_buffer = add_reward_buffer(each_dial_reward, crt_turn_buffer, turn_num)
+                            # initiate a replay buffer
+
+                            #TODO: move init and update after buffer merge
+                            if turn_num > 0:
+                                replay_buffer = merge_turn_buffer(prev_turn_buffer, crt_turn_buffer, replay_buffer)
+                            prev_turn_buffer = crt_turn_buffer
+                            if turn_num == len(dial_batch) - 1:
+                                replay_buffer = merge_turn_buffer(prev_turn_buffer, crt_turn_buffer, replay_buffer)
                         #print(f'current iter: {iter_num} turn: {turn_num} reward metrics: success {success}, match {match}')
                         #print('current each dial reward:')
                         #print(each_dial_reward)
@@ -444,6 +470,8 @@ class Model(object):
                         logging.info('bspn-dst:{:.3f}'.format(float(losses['bspn'])))
                     if cfg.multi_acts_training:
                         logging.info('aspn-aug:{:.3f}'.format(float(losses['aspn_aug'])))
+                    if cfg.generate_bcq:
+                        logging.info( 'len of buffer now{}'.format(replay_buffer.crt_size))
 
                 # btm = time.time()
                 # if (iter_num+1)%40==0:
@@ -482,6 +510,10 @@ class Model(object):
                 logging.info('epoch: %d early stop countdown %d' % (epoch+1, early_stop_count))
                 if not early_stop_count:
                     self.load_model()
+                    if cfg.generate_bcq:
+                        print('******* saved buffer *********')
+                        buffer_path = os.path.join(cfg.exp_path, 'replay.json')
+                        replay_buffer.save(buffer_path)
                     print('result preview...')
                     file_handler = logging.FileHandler(os.path.join(cfg.exp_path, 'eval_log%s.json'%cfg.seed))
                     logging.getLogger('').addHandler(file_handler)
@@ -495,6 +527,10 @@ class Model(object):
                     weight_decay_count = cfg.weight_decay_count
                     logging.info('learning rate decay, learning rate: %f' % (lr))
         self.load_model()
+        if cfg.generate_bcq:
+            print('******* saved buffer *********')
+            buffer_path = os.path.join(cfg.exp_path, 'replay.json')
+            replay_buffer.save(buffer_path)
         print('result preview...')
         file_handler = logging.FileHandler(os.path.join(cfg.exp_path, 'eval_log%s.json'%cfg.seed))
         logging.getLogger('').addHandler(file_handler)
@@ -780,6 +816,288 @@ class Model(object):
         return param_cnt
 
 
+class BCQModel(object):
+    def __init__(self):
+        self.reader = MultiWozReader()
+        if torch.cuda.is_available() and cfg.cuda:
+            device_id = cfg.cuda_device[0]  # 假设cfg.cuda_device是一个列表，我们使用列表中的第一个设备
+            device = torch.device(f"cuda:{device_id}")
+        else:
+            device = torch.device("cpu")
+        self.device = device
+        if len(cfg.cuda_device)==1:
+            self.m = BCQ(self.reader, device=self.device).to(self.device)
+        else:
+            m = BCQ(self.reader).to(self.device)
+            self.m=torch.nn.DataParallel(m, device_ids=cfg.cuda_device)
+            # print(self.m.module)
+        self.evaluator = MultiWozEvaluator(self.reader) # evaluator class
+        #if cfg.cuda: self.m = self.m.cuda()  #cfg.cuda_device[0]
+        #self.optim = Adam(lr=cfg.lr, params=filter(lambda x: x.requires_grad, self.m.parameters()),weight_decay=5e-5)
+        self.base_epoch = -1
+                
+        if cfg.enable_tensorboard:
+            self.writer = SummaryWriter(cfg.tensorboard_path)
+        self.epoch=0
+
+    def add_torch_input(self, inputs, mode='train', first_turn=False):
+        need_onehot = ['state', 'action', 'next_state']
+
+        input_keys = ['state', 'action', 'next_state', 'reward', 'not_done']
+        for item in input_keys:
+            inputs[item] = cuda_(torch.from_numpy(inputs[item+'_unk_np']).long())
+            if item in ['state', 'next_state', 'action']:
+                inputs[item+'_nounk'] = cuda_(torch.from_numpy(inputs[item+'_np']).long())
+            else:
+                inputs[item+'_nounk'] = inputs[item]
+            
+            #if item in need_onehot:
+            #    inputs[item+'_onehot'] = get_one_hot_input(inputs[item+'_unk_np'])
+
+        return inputs
+
+
+    def tokenize_sentence(self, batch_sentences, mode):
+        tokenized = []
+        for idx, sentence in enumerate(batch_sentences):
+            tokenized.append(self.reader._get_buffer_data(sentence, mode))
+        return tokenized
+    
+    '''
+    def train_BCQ(self, state_dim, action_dim, max_action, device, args):
+        # For saving files
+        setting = f"{args.env}_{args.seed}"
+        buffer_name = f"{args.buffer_name}_{setting}"
+
+        # Initialize policy
+        policy = BCQ(state_dim, action_dim, max_action, device, args.discount, args.tau, args.lmbda, args.phi)
+
+        # Load buffer
+        replay_buffer = utils.ReplayBuffer(state_dim, action_dim, device)
+        replay_buffer.load(f"./buffers/{buffer_name}")
+        
+        evaluations = []
+        episode_num = 0
+        done = True 
+        training_iters = 0
+        
+        while training_iters < args.max_timesteps: 
+            pol_vals = policy.train(replay_buffer, iterations=int(args.eval_freq), batch_size=args.batch_size)
+
+            evaluations.append(eval_policy(policy, args.env, args.seed))
+            np.save(f"./results/BCQ_{setting}", evaluations)
+
+            training_iters += args.eval_freq
+            print(f"Training iterations: {training_iters}")
+    '''
+    def generate_action(self, state):
+        '''
+        param:
+        state: format as inputs['state']
+        '''
+        return self.m.select_action(state)
+
+    def train(self):
+        lr = cfg.lr
+        prev_min_loss, early_stop_count = 1 << 30, cfg.early_stop_count
+        weight_decay_count = cfg.weight_decay_count
+        train_time = 0
+        sw = time.time()         
+
+        rl_step = 0
+        replay_buffer = ReplayBuffer(cfg.batch_size)
+        replay_buffer.load(os.path.join(cfg.exp_path, 'replay.json'))
+        for epoch in range(cfg.epoch_num):
+            if epoch <= self.base_epoch:
+                continue
+            self.training_adjust(epoch)
+            loss_log = {'total':0, 'vae': 0, 'actor':0, 'critic': 0}
+            cnt = 0
+            # data_iterator generatation size: (batch num, turn num, batch size)
+            btm = time.time()
+            #data_iterator = self.reader.get_batches('train')
+            for iter_num in range(replay_buffer.train_size // cfg.batch_size):
+                bgt = time.time()
+                batch_states, batch_actions, batch_next_states, batch_rewards, batch_not_dones = replay_buffer.sample(cfg.batch_size, data_type='train')
+                inputs = {}
+                batch_states = self.tokenize_sentence(batch_states, 'bspn')
+                batch_actions = self.tokenize_sentence(batch_actions, 'aspn')
+                batch_next_states = self.tokenize_sentence(batch_next_states, 'bspn')
+                #TODO: see if set unknown matters here
+                inputs['state_np'] = utils.padSeqs(batch_states, truncated=cfg.truncated, trunc_method='pre') 
+                inputs['state_unk_np'] = deepcopy(inputs['state_np'])
+                inputs['state_unk_np'][inputs['state_unk_np']>=self.reader.vocab_size] = 2   # <unk>
+                inputs['action_np'] = utils.padSeqs(batch_actions, truncated=cfg.truncated, trunc_method='pre') 
+                inputs['action_unk_np'] = deepcopy(inputs['action_np'])
+                inputs['action_unk_np'][inputs['action_unk_np']>=self.reader.vocab_size] = 2   # <unk>
+                inputs['next_state_np'] = utils.padSeqs(batch_next_states, truncated=cfg.truncated, trunc_method='pre') 
+                inputs['next_state_unk_np'] = deepcopy(inputs['next_state_np'])
+                inputs['next_state_unk_np'][inputs['next_state_unk_np']>=self.reader.vocab_size] = 2   # <unk>
+                inputs['reward_unk_np'] = batch_rewards
+                inputs['not_done_unk_np'] = batch_not_dones
+
+                inputs = self.add_torch_input(inputs)
+
+                vae_loss, actor_loss, critic_loss = self.m.train_forward(inputs['state'], inputs['action'], inputs['next_state'], inputs['reward'], inputs['not_done'], batch_size=cfg.batch_size)
+                total_loss = vae_loss + actor_loss + critic_loss
+
+                torch.cuda.empty_cache()
+
+                if (iter_num+1)%cfg.report_interval==0:
+                    logging.info('iter:{} [vae|actor|critic] loss: {:.2f} {:.2f} {:.2f}  time: {:.1f}  '.format(iter_num+1,
+                                                                            float(vae_loss),
+                                                                            float(actor_loss), 
+                                                                            float(critic_loss),
+                                                                            time.time()-btm,
+                                                                            ))
+                loss_log['total'] += float(total_loss)
+                loss_log['vae'] += float(vae_loss)
+                loss_log['actor'] += float(actor_loss)
+                loss_log['critic'] += float(critic_loss)
+                cnt += 1
+                torch.cuda.empty_cache()
+
+            
+            if cfg.enable_tensorboard:
+                epoch_log_total_loss = loss_log['total'] / (cnt + 1e-8)
+                epoch_log_vae_loss = loss_log['vae'] / (cnt + 1e-8)
+                epoch_log_actor_loss = loss_log['actor'] / (cnt + 1e-8)
+                epoch_log_critic_loss = loss_log['critic'] / (cnt + 1e-8)
+                self.writer.add_scalar('Total BCQ Loss/train', epoch_log_total_loss, epoch)
+                self.writer.add_scalar('VAE Loss/train', epoch_log_vae_loss, epoch)
+                self.writer.add_scalar('Actor Loss/train', epoch_log_actor_loss, epoch)
+                self.writer.add_scalar('Critic Loss/train', epoch_log_critic_loss, epoch)
+
+
+
+            total_val_loss, vae_val_loss, actor_val_loss, critic_val_loss = self.validate(replay_buffer)
+            if cfg.enable_tensorboard:
+                self.writer.add_scalar('Total BCQ Loss/valid', total_val_loss, epoch)
+                self.writer.add_scalar('VAE Loss/valid', vae_val_loss, epoch)
+                self.writer.add_scalar('Actor Loss/valid', -actor_val_loss, epoch)
+                self.writer.add_scalar('Critic Loss/valid', critic_val_loss, epoch)
+            logging.info('epoch: %d, sup loss: %.3f, train loss: %.3f, valid loss: %.3f, total time: %.1fmin' % (epoch+1, loss_log['total'], loss_log['total'] / (cnt + 1e-8),
+                    total_val_loss, (time.time()-sw)/60))
+            selected_act = self.m.select_action(inputs['state'])
+            # self.save_model(epoch)
+            if total_val_loss <= prev_min_loss:
+                early_stop_count = cfg.early_stop_count
+                prev_min_loss = total_val_loss
+                self.save_model(epoch)
+            else:
+                early_stop_count -= 1
+                logging.info('epoch: %d early stop countdown %d' % (epoch+1, early_stop_count))
+                if not early_stop_count:
+                    self.load_model()
+                    print('result preview...')
+                    file_handler = logging.FileHandler(os.path.join(cfg.exp_path, 'bcq_eval_log%s.json'%cfg.seed))
+                    logging.getLogger('').addHandler(file_handler)
+                    logging.info(str(cfg))
+
+                    return
+        self.load_model()
+        print('result preview...')
+        file_handler = logging.FileHandler(os.path.join(cfg.exp_path, 'bcq_eval_log%s.json'%cfg.seed))
+        logging.getLogger('').addHandler(file_handler)
+        logging.info(str(cfg))
+
+
+
+    def validate(self, replay_buffer=None):
+        print("************* validate test **********")
+        #pdb.set_trace()
+        self.m.eval()
+        loss_log = {'total':0, 'vae': 0, 'actor':0, 'critic': 0}
+        cnt = 0
+        for iter_num in range(replay_buffer.val_size // cfg.batch_size):
+            bgt = time.time()
+            batch_states, batch_actions, batch_next_states, batch_rewards, batch_not_dones = replay_buffer.sample(cfg.batch_size, data_type='train')
+            inputs = {}
+            batch_states = self.tokenize_sentence(batch_states, 'bspn')
+            batch_actions = self.tokenize_sentence(batch_actions, 'aspn')
+            batch_next_states = self.tokenize_sentence(batch_next_states, 'bspn')
+            #TODO: see if set unknown matters here
+
+            inputs['state_np'] = utils.padSeqs(batch_states, truncated=cfg.truncated, trunc_method='pre') 
+            inputs['state_unk_np'] = deepcopy(inputs['state_np'])
+            inputs['state_unk_np'][inputs['state_unk_np']>=self.reader.vocab_size] = 2   # <unk>
+            inputs['action_np'] = utils.padSeqs(batch_actions, truncated=cfg.truncated, trunc_method='pre') 
+            inputs['action_unk_np'] = deepcopy(inputs['action_np'])
+            inputs['action_unk_np'][inputs['action_unk_np']>=self.reader.vocab_size] = 2   # <unk>
+            inputs['next_state_np'] = utils.padSeqs(batch_next_states, truncated=cfg.truncated, trunc_method='pre') 
+            inputs['next_state_unk_np'] = deepcopy(inputs['next_state_np'])
+            inputs['next_state_unk_np'][inputs['next_state_unk_np']>=self.reader.vocab_size] = 2   # <unk>
+            inputs['reward_unk_np'] = batch_rewards
+            inputs['not_done_unk_np'] = batch_not_dones
+
+            inputs = self.add_torch_input(inputs)
+
+            vae_loss, actor_loss, critic_loss = self.m.valid_forward(inputs['state'], inputs['action'], inputs['next_state'], inputs['reward'], inputs['not_done'], batch_size=cfg.batch_size)
+            total_loss = vae_loss + actor_loss + critic_loss
+            loss_log['total'] += float(total_loss)
+            loss_log['vae'] += float(vae_loss)
+            loss_log['actor'] += float(actor_loss)
+            loss_log['critic'] += float(critic_loss)
+            cnt += 1
+
+        logging.info('validation vae: %2.1f  actor: %2.1f  critic: %2.1f'%(loss_log['vae']/cnt, loss_log['actor']/cnt, loss_log['critic']/cnt))
+        self.m.train()
+        return loss_log['total']/cnt, loss_log['vae']/cnt, loss_log['actor']/cnt, loss_log['critic']/cnt
+
+        
+
+    def save_model(self, epoch, path=None, critical=False):
+        if not cfg.save_log:
+            return
+        if not path:
+            path = cfg.model_path
+        if critical:
+            path += '.final'
+        all_state = {'lstd': self.m.state_dict(),
+                     'config': cfg.__dict__,
+                     'epoch': epoch}
+        torch.save(all_state, path)
+        logging.info('BCQ Model saved')
+
+    def load_model(self, path=None):
+        if not path:
+            path = cfg.bcq_model_path
+        all_state = torch.load(path, map_location='cpu')
+        self.m.load_state_dict(all_state['lstd'])
+        self.base_epoch = all_state.get('epoch', 0)
+        logging.info('BCQ Model loaded')
+
+    def training_adjust(self, epoch):
+        return
+
+    def freeze_module(self, module):
+        for param in module.parameters():
+            param.requires_grad = False
+
+    def unfreeze_module(self, module):
+        for param in module.parameters():
+            param.requires_grad = True
+
+    def load_glove_embedding(self, freeze=False):
+        if not cfg.multi_gpu:
+            initial_arr = self.m.embedding.weight.data.cpu().numpy()
+            emb = torch.from_numpy(utils.get_glove_matrix(
+                            cfg.glove_path, self.reader.vocab, initial_arr))
+            self.m.embedding.weight.data.copy_(emb)
+        else:
+            initial_arr = self.m.module.embedding.weight.data.cpu().numpy()
+            emb = torch.from_numpy(utils.get_glove_matrix(
+                            cfg.glove_path, self.reader.vocab, initial_arr))
+            self.m.module.embedding.weight.data.copy_(emb)
+
+
+    def count_params(self):
+        module_parameters = filter(lambda p: p.requires_grad, self.m.parameters())
+        param_cnt = int(sum([np.prod(p.size()) for p in module_parameters]))
+
+        print('total trainable params: %d' % param_cnt)
+        return param_cnt
+
 def parse_arg_cfg(args):
     if args.cfg:
         for pair in args.cfg:
@@ -874,11 +1192,21 @@ def main():
                 if os.path.exists(cfg.exp_path):
                     shutil.rmtree(cfg.exp_path)
                 os.mkdir(cfg.exp_path)
+
             cfg.model_path = os.path.join(cfg.exp_path, 'model.pkl')
             cfg.result_path = os.path.join(cfg.exp_path, 'result.csv')
             cfg.vocab_path_eval = os.path.join(cfg.exp_path, 'vocab')
+
             if cfg.enable_tensorboard:
                 cfg.tensorboard_path = os.path.join(cfg.exp_path, 'runs')
+                print('tensorboard_path {}'.format(cfg.tensorboard_path))
+            cfg.eval_load_path = cfg.exp_path
+        elif cfg.train_bcq:
+            cfg.model_path = os.path.join(cfg.exp_path, 'bcq_model.pkl')
+            cfg.result_path = os.path.join(cfg.exp_path, 'bcq_result.csv')
+            cfg.vocab_path_eval = os.path.join(cfg.exp_path, 'vocab')
+            if cfg.enable_tensorboard:
+                cfg.tensorboard_path = os.path.join(cfg.exp_path, 'bcq_runs')
                 print('tensorboard_path {}'.format(cfg.tensorboard_path))
             cfg.eval_load_path = cfg.exp_path
 
@@ -898,12 +1226,30 @@ def main():
     torch.cuda.manual_seed(cfg.seed)
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
-    m = Model()
+    if cfg.train_bcq:
+        m = BCQModel()
+    elif cfg.use_bcq:
+        bcq_m = BCQModel()
+        bcq_m.load_model(cfg.bcq_model_path)
+        m = Model(bcq_m)
+    else:
+        m = Model()
     cfg.model_parameters = m.count_params()
     logging.info(str(cfg))
     logging.info(json.dumps(other_config,indent=2))
 
-    if args.mode == 'train':
+    if cfg.train_bcq:
+        if cfg.save_log:
+            # open(cfg.exp_path + 'config.json', 'w').write(str(cfg))
+            m.reader.vocab.save_vocab(cfg.vocab_path_eval)
+            with open(os.path.join(cfg.exp_path, 'bcq_config.json'), 'w') as f:
+                json.dump({**cfg.__dict__, **other_config}, f, indent=2)
+                
+            with open(os.path.join(cfg.exp_path, 'bcq_other_config.json'), 'w') as f:
+                json.dump(other_config,f,indent=2)
+        # m.load_glove_embedding()
+        m.train()
+    elif args.mode == 'train' and not cfg.train_bcq:
         if cfg.save_log:
             # open(cfg.exp_path + 'config.json', 'w').write(str(cfg))
             m.reader.vocab.save_vocab(cfg.vocab_path_eval)

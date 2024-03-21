@@ -131,7 +131,7 @@ class MultiWozEvaluator(object):
 
         return metric_results
 
-    def validation_metric(self, data, return_rich=False, return_per_dialog=False,soft_acc=False,return_each=False, return_dict=None, turn_num=None, return_contrast=False):
+    def validation_metric(self, data, return_rich=False, return_per_dialog=False,soft_acc=False,return_each=False, return_dict=None, turn_num=None, return_contrast=False, return_buffer=False):
         bleu = self.bleu_metric(data, not_return_log=return_each)
         all_dialogid_bleus = {}
         if return_per_dialog==True:
@@ -146,7 +146,7 @@ class MultiWozEvaluator(object):
         accu_single_dom, accu_multi_dom, multi_dom_num = self.domain_eval(data)
         context_to_eval_response  = self.context_to_response_eval(data,
                                                                   same_eval_as_cambridge=cfg.same_eval_as_cambridge,return_extra=return_rich,return_for_each_dialogue=return_each,
-                                                                  soft_acc=soft_acc,return_dict=return_dict,turn_num=turn_num, return_contrast=return_contrast)
+                                                                  soft_acc=soft_acc,return_dict=return_dict,turn_num=turn_num, return_contrast=return_contrast, return_buffer=return_buffer)
         if return_rich:
             success, success_true, match, req_offer_counts, dial_num, stats, all_true_reqs, all_pred_reqs,all_successes,all_matches, dial_ids  = context_to_eval_response
                 
@@ -157,6 +157,9 @@ class MultiWozEvaluator(object):
                 return bleu, success, match, req_offer_counts, stats, all_true_reqs, all_pred_reqs, success_true,all_successes,all_matches,all_bleus, dial_ids
             else:
                 return bleu, success, match, req_offer_counts, stats, all_true_reqs, all_pred_reqs, success_true
+        elif return_buffer:
+            success, match, _ , dial_num, return_dict, return_buffer = context_to_eval_response
+            return bleu, success, match, return_dict, return_buffer
         elif return_each:
             success, match, _ , dial_num, return_dict = context_to_eval_response
             return bleu, success, match, return_dict
@@ -521,7 +524,7 @@ class MultiWozEvaluator(object):
         return total_act_num, total_slot_num
 
 
-    def context_to_response_eval(self, data, eval_dial_list = None, same_eval_as_cambridge=False,return_extra=False,return_for_each_dialogue=False,soft_acc=False,return_dict=None,turn_num=None, return_contrast=False):
+    def context_to_response_eval(self, data, eval_dial_list = None, same_eval_as_cambridge=False,return_extra=False,return_for_each_dialogue=False,soft_acc=False,return_dict=None,turn_num=None, return_contrast=False, return_buffer=False):
         dials = self.pack_dial(data)
         # data format: ['dial_id', 'turn_num', 'user', 'bsdx_gen', 'bsdx', 'resp_gen', 'resp', 'aspn_gen', 'aspn', 'dspn_gen', 'dspn', 'bspn', 'pointer']
         # defined in field, MultiWozReader.wrap_result
@@ -536,6 +539,8 @@ class MultiWozEvaluator(object):
                 each_res = {}
             else:
                 each_res = return_dict
+        if return_buffer:
+            buffer = {}
         all_true_reqs=[]
         all_pred_reqs=[]
         gen_stats = None
@@ -593,6 +598,15 @@ class MultiWozEvaluator(object):
                     each_res[dial_id][turn_num]['reward'] = success * 2 + match + sim_score
                 else:
                     each_res[dial_id][turn_num]['reward'] = success * 2 + match # TODO: modify factors
+            if return_buffer:
+                buffer[dial_id] = {}
+                for idx, turn_dict in enumerate(dials[dial_id]):
+                    if turn_dict['turn_num'] == turn_num: 
+                        buffer[dial_id]['reward'] = each_res[dial_id][turn_num]['reward']
+                        buffer[dial_id]['state'] = dials[dial_id][idx]['bspn']
+                        buffer[dial_id]['action'] = dials[dial_id][idx]['aspn']
+                        buffer[dial_id]['action_gen'] = dials[dial_id][idx]['aspn_gen']
+                        break
             if gen_stats is None:
                 gen_stats = stats.copy()
             for domain in gen_stats.keys():
@@ -612,6 +626,8 @@ class MultiWozEvaluator(object):
         match_rate = matches/(float(dial_num) + 1e-10) * 100
         if return_extra:
                 return succ_rate, succ_true_rate, match_rate, counts, dial_num, gen_stats, all_true_reqs, all_pred_reqs, all_successes, all_matches, dial_ids
+        elif return_buffer:
+            return succ_rate, match_rate, counts, dial_num, each_res, buffer
         elif return_for_each_dialogue:
             return succ_rate, match_rate, counts, dial_num, each_res
         else:

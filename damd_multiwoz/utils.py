@@ -4,6 +4,7 @@ import numpy as np
 from collections import OrderedDict
 import ontology
 import pdb
+from sklearn.model_selection import train_test_split
 
 def py2np(list):
     return np.array(list)
@@ -228,3 +229,189 @@ def position_encoding_init(self, n_position, d_pos_vec):
     position_enc[1:, 0::2] = np.sin(position_enc[1:, 0::2])  # dim 2i
     position_enc[1:, 1::2] = np.cos(position_enc[1:, 1::2])  # dim 2i+1
     return position_enc
+
+
+class ReplayBuffer(object):
+    def __init__(self, batch_size=128, buffer_size=1e6): #turn_num = 1):
+        #self.turn_num = turn_num # dataset loader reads based on total turn_num, so replay buffer use this too
+        self.batch_size = batch_size
+        self.max_size = int(buffer_size)
+
+        self.ptr = 0
+        self.crt_size = 0
+
+        self.state = []
+        self.action = []
+        self.action_gt = []
+        self.next_state = []
+        self.reward = np.zeros((self.max_size, 1))
+        self.not_done = np.zeros((self.max_size, 1))
+
+    def add(self, state, action, action_gt, next_state, reward, done):
+        if self.crt_size < self.max_size:
+            self.state.append(state)
+            self.action.append(action)
+            self.next_state.append(next_state)
+            self.action_gt.append(action_gt)
+
+        else:
+            self.state[self.ptr] = state
+            self.action[self.ptr] = action
+            self.action_gt[self.ptr] = action_gt
+            self.next_state[self.ptr] = next_state
+
+        self.reward[self.ptr] = reward
+        self.not_done[self.ptr] = 1. - done
+        self.ptr = (self.ptr + 1) % self.max_size
+        self.crt_size = min(self.crt_size + 1, self.max_size)
+
+    def show(self, name, start=None, end=None):
+        def show_helper(l, start=None, end=None):
+            if start is not None and end is not None:
+                for idx in range(start, end):
+                    print(l[idx])
+            else:
+                for idx in range(self.crt_size):
+                    print(l[idx])
+        if name == 'state':
+            print('********** state *********')
+            show_helper(self.state, start, end)
+        elif name == 'action': 
+            print('********** action *********')
+            show_helper(self.action, start, end)
+        elif name == 'action_gt':
+            print('********** action gt *********')
+            show_helper(self.action_gt, start, end)
+        elif name == 'next_state':
+            print('********** next state *********')
+            show_helper(self.next_state, start, end)
+        elif name == 'reward':
+            print('********** reward *********')
+            print(self.reward)
+        elif name == 'not_done':
+            print('********** not done *********')
+            print(self.not_done)
+        print(f'len of buffer now: {self.crt_size}')
+
+    '''
+    def sample(self):
+        ind = np.random.randint(0, self.crt_size, size=self.batch_size)
+        batch_states = [self.state[i] for i in ind]
+        batch_actions = [self.action[i] for i in ind]
+        batch_actions_gt = [self.action_gt[i] for i in ind]
+        batch_next_states = [self.next_state[i] for i in ind]
+        batch_rewards = self.reward[ind]
+        batch_not_dones = self.not_done[ind]
+
+        # Convert batch_rewards and batch_not_dones to suitable formats if necessary
+        return batch_states, batch_actions, batch_actions_gt, batch_next_states, batch_rewards, batch_not_dones
+    '''
+    def save(self, save_file):
+        # Convert numpy arrays to lists for JSON compatibility
+        rewards_list = self.reward[:self.crt_size].flatten().tolist()
+        not_dones_list = self.not_done[:self.crt_size].flatten().tolist()
+        
+        # Create a dictionary of all the data
+        save_dict = {
+            'state': self.state[:self.crt_size],
+            'action': self.action[:self.crt_size],
+            'action_gt': self.action_gt[:self.crt_size], 
+            'next_state': self.next_state[:self.crt_size],
+            'reward': rewards_list,
+            'not_done': not_dones_list,
+            'ptr': self.ptr,
+            'crt_size': self.crt_size
+        }
+        
+        # Write the dictionary to a file as JSON
+        with open(save_file, 'w') as f:
+            json.dump(save_dict, f)
+    
+    def load(self, save_file):
+        # Read the data from the file
+        with open(save_file, 'r') as f:
+            load_dict = json.load(f)
+        
+        # Update the buffer attributes
+        self.state = load_dict['state']
+        self.action = load_dict['action']
+        self.action_gt = load_dict['action_gt']
+        self.next_state = load_dict['next_state']
+        self.reward = np.array(load_dict['reward']).reshape(-1, 1)
+        self.not_done = np.array(load_dict['not_done']).reshape(-1, 1)
+        self.ptr = load_dict['ptr']
+        self.crt_size = load_dict['crt_size']
+
+        print(f"Replay Buffer loaded with {self.crt_size} elements.")
+                # 分割数据为训练集和验证集 (90% 训练, 10% 验证)
+        indices = np.arange(len(self.state))
+        train_indices, val_indices = train_test_split(indices, test_size=0.1, random_state=42)
+
+        self.train_state = [self.state[i] for i in train_indices]
+        self.train_action = [self.action[i] for i in train_indices]
+        self.train_next_state = [self.next_state[i] for i in train_indices]
+        self.train_reward = self.reward[train_indices]
+        self.train_not_done = self.not_done[train_indices]
+        self.train_size = len(self.train_state)
+
+        self.val_state = [self.state[i] for i in val_indices]
+        self.val_action = [self.action[i] for i in val_indices]
+        self.val_next_state = [self.next_state[i] for i in val_indices]
+        self.val_reward = self.reward[val_indices]
+        self.val_not_done = self.not_done[val_indices]
+        self.val_size = len(self.val_state)
+
+        print(f"Data loaded. Train size: {self.train_size}, Validation size: {self.val_size}")
+
+    def sample(self, batch_size, data_type='train'):
+        if data_type == 'train':
+            indices = np.random.randint(0, self.train_size, size=batch_size)
+            batch_states = [self.train_state[i] for i in indices]
+            batch_actions = [self.train_action[i] for i in indices]
+            batch_next_states = [self.train_next_state[i] for i in indices]
+            batch_rewards = self.train_reward[indices]
+            batch_not_dones = self.train_not_done[indices]
+        elif data_type == 'val':
+            indices = np.random.randint(0, self.val_size, size=batch_size)
+            batch_states = [self.val_state[i] for i in indices]
+            batch_actions = [self.val_action[i] for i in indices]
+            batch_next_states = [self.val_next_state[i] for i in indices]
+            batch_rewards = self.val_reward[indices]
+            batch_not_dones = self.val_not_done[indices]
+        else:
+            raise ValueError("data_type should be either 'train' or 'val'.")
+
+        return batch_states, batch_actions, batch_next_states, batch_rewards, batch_not_dones
+def merge_turn_buffer(prev, crt, replay_buffer):
+    '''
+    Given the evaluation process prev and current bspn, aspn and gen respectively, merged it into 
+    [prev state, prev act, cur state] for replay buffer
+
+    Input:
+    prev, crt: dict
+        [dial_id][state/action/action_gen/reward]
+    replay_buffer
+        ReplayBuffer class
+    '''
+    done = float((prev == crt))
+    for dial_id in prev:
+        # state, action, action_gt, next_state, reward
+        replay_buffer.add(prev[dial_id]['state'], prev[dial_id]['action_gen'], prev[dial_id]['action'], crt[dial_id]['state'], prev[dial_id]['reward'], done)
+    return replay_buffer
+
+
+def add_reward_buffer(reward_dict, buffer, turn_num):
+    '''
+    update reward info into buffer
+
+    Input:
+    turn_num:
+        crt turn_num for idx in reward_dict
+    reward_dict: 
+        [dial_id][turn_num]['reward']
+    buffer:
+        [dial_id]['aspn/bspn/aspn_gen/bspn_gen']
+    '''
+    for dial_id in buffer:
+        buffer[dial_id]['reward'] = reward_dict[dial_id][turn_num]['reward']
+    return buffer

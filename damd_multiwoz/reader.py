@@ -376,6 +376,13 @@ class MultiWozReader(_ReaderBase):
 
             encoded_dial.append(enc)
         return encoded_dial
+    def _get_buffer_data(self, sentence, mode):
+        if mode == 'aspn':
+            return self.vocab.sentence_encode(sentence.split() + ['<eos_a>'])
+        elif mode == 'bspn':
+            return self.vocab.sentence_encode(sentence.split() + ['<eos_b>'])
+        else:
+            assert('Dont support mode other than aspn and bspn!')
 
     def bspan_to_constraint_dict(self, bspan, bspn_mode = 'bspn'):
         bspan = bspan.split() if isinstance(bspan, str) else bspan

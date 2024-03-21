@@ -65,8 +65,8 @@ class _Config:
         self.label_smoothing = .0
         self.lr_decay = 0.5
         self.batch_size = 128
-        self.epoch_num = 100 #100 
-        self.early_stop_count = 6 #6 
+        self.epoch_num = 20 #100 
+        self.early_stop_count = 3 #6 
         self.weight_decay_count = 3
         self.teacher_force = 100
         self.multi_acts_training = False
@@ -125,6 +125,13 @@ class _Config:
         self.enable_contrast_reward = False
         self.sample_ratio = 0.1
         self.cntfact_penalty = -0.1
+        self.generate_bcq = False
+        self.train_bcq = False
+        self.use_bcq = False
+        self.load_buffer_path = 'experiments/all_multi_acts_sample3_sd777_lr0.005_bs80_sp5_dc3/replay.json'
+        #self.train_bcq_iteration = 1e5
+        self.bcq_model_path = 'experiments/all_multi_acts_sample3_sd777_lr0.005_bs80_sp5_dc3/bcq_model.pkl'
+
 
     def __str__(self):
         s = ''

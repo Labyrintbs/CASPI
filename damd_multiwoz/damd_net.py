@@ -691,6 +691,8 @@ class ActSpanDecoder(nn.Module):
             input_dim += cfg.hidden_size
         if cfg.enable_dspn :
             input_dim += cfg.hidden_size
+        if cfg.use_bcq:
+            input_dim += cfg.hidden_size
 
         self.gru = nn.GRU(input_dim, cfg.hidden_size, cfg.dec_layer_num,
                                     dropout=cfg.dropout, batch_first=True)
@@ -798,6 +800,9 @@ class ActSpanDecoder(nn.Module):
             gru_input.append(inputs['db'].unsqueeze(1))
         else:
             gru_input.append(inputs['db'][bidx].unsqueeze(1))
+        
+        if cfg.use_bcq:
+            gru_input.append(inputs['bcq_action'].unsqueeze(1))
 
         #self.gru.flatten_parameters()
         gru_out, dec_last_h = self.gru(torch.cat(gru_input, 2), dec_last_h)   # [B, 1, H], [n_layer, B, H]
@@ -1086,7 +1091,7 @@ class ActSelectionModel(nn.Module):
         return logprob
 
 class DAMD(nn.Module):
-    def __init__(self, reader):
+    def __init__(self, reader, bcq=None):
         super().__init__()
         self.reader = reader
         self.vocab = self.reader.vocab
@@ -1102,6 +1107,8 @@ class DAMD(nn.Module):
         self.label_smth = cfg.label_smoothing
         self.beam_width = cfg.beam_width
         self.nbest = cfg.nbest
+        if bcq is not None:
+            self.bcq = bcq
 
         # self.module_list = nn.ModuleList()
 
@@ -1885,6 +1892,9 @@ class DAMD(nn.Module):
         probs, decoded = {}, {}
         #pdb.set_trace()
 
+        if cfg.use_bcq:
+            inputs['bcq_state'] = copy.deepcopy(inputs[cfg.bspn_mode])
+            inputs['bcq_action'] = self.bcq.generate_action(inputs['bcq_state'])
         if cfg.enable_dspn: # false
             dspn_enc, _ = self.span_encoder(inputs['pv_dspn'])
             hidden_states['dspn'] = dspn_enc
@@ -1965,6 +1975,9 @@ class DAMD(nn.Module):
         hs['resp'] = resp_enc
 
         decoded = {}
+        if cfg.use_bcq:
+            inputs['bcq_state'] = copy.deepcopy(inputs[cfg.bspn_mode])
+            inputs['bcq_action'] = self.bcq.generate_action(inputs['bcq_state'])
 
         if cfg.enable_dst and cfg.bspn_mode == 'bsdx':
             bspn_enc, _ = self.span_encoder(inputs['pv_bspn'])
@@ -2448,5 +2461,297 @@ class BeamSearchNode(object):
             node = node.prevNode
         print(string)
 
+class SharedEncoder(nn.Module):
+    def __init__(self, vocab_size):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.embedding = nn.Embedding(self.vocab_size, cfg.embed_size)
+        self.span_encoder = biGRUencoder(self.embedding)
+        #self.l1 = nn.Linear(cfg.hidden_size, cfg.hidden_size) 
+        #self.l1 = nn.Linear(state_dim + action_dim, 400)
+        #self.l2 = nn.Linear(400, 300)
+
+    def forward(self, x):
+        return self.span_encoder(x)
+
+class Actor(nn.Module):
+    def __init__(self, state_dim, action_dim, max_action, phi=0.05):
+        super().__init__()
+        #self.encoder = shared_encoder
+        self.l1 = nn.Linear(state_dim + action_dim, 400)
+        self.l2 = nn.Linear(400, 300)
+        self.l3 = nn.Linear(300, action_dim)
+        
+        self.max_action = max_action
+        self.phi = phi
+
+
+    def forward(self, state, action):
+        #encoded = self.encoder(state, action)
+        a = F.relu(self.l1(torch.cat([state, action], 1)))
+        a = F.relu(self.l2(a))
+        a = self.phi * self.max_action * torch.tanh(self.l3(a))
+        return (a + action).clamp(-self.max_action, self.max_action)
+
+
+class Critic(nn.Module):
+    def __init__(self, state_dim, action_dim):
+        #self.encoder = shared_encoder
+        super().__init__()
+        self.l1 = nn.Linear(state_dim + action_dim, 400)
+        self.l2 = nn.Linear(400, 300)
+        self.l3 = nn.Linear(300, 1)
+
+        self.l4 = nn.Linear(state_dim + action_dim, 400)
+        self.l5 = nn.Linear(400, 300)
+        self.l6 = nn.Linear(300, 1)
+
+
+    def forward(self, state, action):
+        #encoded = self.encoder(state, action)
+        q1 = F.relu(self.l1(torch.cat([state, action], 1)))
+        q1 = F.relu(self.l2(q1))
+        q1 = self.l3(q1)
+
+        q2 = F.relu(self.l4(torch.cat([state, action], 1)))
+        q2 = F.relu(self.l5(q2))
+        q2 = self.l6(q2)
+        return q1, q2
+
+
+    def q1(self, state, action):
+        q1 = F.relu(self.l1(torch.cat([state, action], 1)))
+        q1 = F.relu(self.l2(q1))
+        q1 = self.l3(q1)
+        return q1
+
+
+# Vanilla Variational Auto-Encoder 
+class VAE(nn.Module):
+    def __init__(self, state_dim, action_dim, latent_dim, max_action, device):
+        super().__init__()
+        self.e1 = nn.Linear(state_dim + action_dim, 750)
+        self.e2 = nn.Linear(750, 750)
+
+        self.mean = nn.Linear(750, latent_dim)
+        self.log_std = nn.Linear(750, latent_dim)
+
+        self.d1 = nn.Linear(state_dim + latent_dim, 750)
+        self.d2 = nn.Linear(750, 750)
+        self.d3 = nn.Linear(750, action_dim)
+
+        self.max_action = max_action
+        self.latent_dim = latent_dim
+        self.device = device
+
+
+    def forward(self, state, action):
+        z = F.relu(self.e1(torch.cat([state, action], 1)))
+        z = F.relu(self.e2(z))
+
+        mean = self.mean(z)
+        # Clamped for numerical stability 
+        log_std = self.log_std(z).clamp(-4, 15)
+        std = torch.exp(log_std)
+        z = mean + std * torch.randn_like(std)
+        
+        u = self.decode(state, z)
+
+        return u, mean, std
+
+
+    def decode(self, state, z=None):
+        # When sampling from the VAE, the latent vector is clipped to [-0.5, 0.5]
+        if z is None:
+            z = torch.randn((state.shape[0], self.latent_dim)).to(self.device).clamp(-0.5,0.5)
+
+        a = F.relu(self.d1(torch.cat([state, z], 1)))
+        a = F.relu(self.d2(a))
+        return self.max_action * torch.tanh(self.d3(a))
+        
+
+
+class BCQ(nn.Module):
+    def __init__(self, reader, state_dim=cfg.hidden_size, action_dim=cfg.hidden_size, max_action=1, device='cpu', discount=0.99, tau=0.005, lmbda=0.75, phi=0.05):
+        super().__init__()
+        latent_dim = action_dim * 2
+        self.reader = reader
+        self.vocab = self.reader.vocab
+        self.vocab_size = self.vocab.vocab_size
+        self.vsize_oov = self.vocab.vocab_size_oov
+        self.embed_size = cfg.embed_size
+        self.hidden_size = cfg.hidden_size
+
+        self.shared_encoder = SharedEncoder(self.vocab_size).to(device)
+        self.actor = Actor(state_dim, action_dim, max_action, phi).to(device)
+        self.actor_target = copy.deepcopy(self.actor)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=1e-3)
+
+        self.critic = Critic(state_dim, action_dim).to(device)
+        self.critic_target = copy.deepcopy(self.critic)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=1e-3)
+
+        self.vae = VAE(state_dim, action_dim, latent_dim, max_action, device).to(device)
+        self.vae_optimizer = torch.optim.Adam(self.vae.parameters()) 
+
+        self.max_action = max_action
+        self.action_dim = action_dim
+        self.discount = discount
+        self.tau = tau
+        self.lmbda = lmbda
+        self.device = device
+
+
+    def select_action(self, state):		
+        with torch.no_grad():
+            state_embed, state_last_h = self.shared_encoder(state)
+            state_last_h = self.scale_to_range(torch.sum(state_last_h, dim=0))
+
+            state_repeated = state_last_h.repeat_interleave(100, dim=0)
+            actions = self.actor(state_repeated, self.vae.decode(state_repeated))
+            
+            q_values = self.critic.q1(state_repeated, actions)
+            q_values = q_values.view(-1, 100)
+            
+            max_indices = q_values.argmax(dim=1)
+            actions = actions.view(-1, 100, actions.size(-1))
+            selected_actions = actions[torch.arange(actions.size(0)), max_indices]
+            return selected_actions
+        
+    def scale_to_range(self, tensor, range_min=-1, range_max=1):
+        """
+        scale tensor into range 。
+        
+        para:
+        - tensor: [batch_size, hidden_size]
+        - range_min
+        - range_max
+        
+        return:
+        - tensor_scaled
+        """
+        # 按批次（dim=0）找到最小值和最大值
+        min_vals = torch.min(tensor, dim=1, keepdim=True)[0]
+        max_vals = torch.max(tensor, dim=1, keepdim=True)[0]
+        
+        tensor_std = (tensor - min_vals) / (max_vals - min_vals)
+        tensor_scaled = tensor_std * (range_max - range_min) + range_min
+        
+        return tensor_scaled
+           
+
+
+    def train_forward(self, state, action, next_state, reward, not_done, batch_size=100):
+        #TODO: add normalization
+        #for it in range(iterations):
+        # Sample replay buffer / batch
+        #state, action, next_state, reward, not_done = replay_buffer.sample(batch_size)
+
+        # Variational Auto-Encoder Training
+        state_embed, state_last_h = self.shared_encoder(state)
+        action_embed, action_last_h = self.shared_encoder(action)
+        next_state_embed, next_state_last_h = self.shared_encoder(next_state)
+        state_last_h = self.scale_to_range(torch.sum(state_last_h, dim=0))
+        action_last_h = self.scale_to_range(torch.sum(action_last_h, dim=0))
+        next_state_last_h = self.scale_to_range(torch.sum(next_state_last_h, dim=0))
+        recon, mean, std = self.vae(state_last_h, action_last_h)
+        recon_loss = F.mse_loss(recon, action_last_h)
+        KL_loss	= -0.5 * (1 + torch.log(std.pow(2)) - mean.pow(2) - std.pow(2)).mean()
+        vae_loss = recon_loss + 0.5 * KL_loss
+
+        self.vae_optimizer.zero_grad()
+        #vae_loss.backward()
+        vae_loss.backward(retain_graph=True)
+        self.vae_optimizer.step()
+
+
+        # Critic Training
+        with torch.no_grad():
+            # Duplicate next state 10 times
+            next_state_last_h = torch.repeat_interleave(next_state_last_h, 10, 0)
+
+            # Compute value of perturbed actions sampled from the VAE
+            target_Q1, target_Q2 = self.critic_target(next_state_last_h, self.actor_target(next_state_last_h, self.vae.decode(next_state_last_h)))
+
+            # Soft Clipped Double Q-learning 
+            target_Q = self.lmbda * torch.min(target_Q1, target_Q2) + (1. - self.lmbda) * torch.max(target_Q1, target_Q2)
+            # Take max over each action sampled from the VAE
+            target_Q = target_Q.reshape(batch_size, -1).max(1)[0].reshape(-1, 1)
+
+            target_Q = reward + not_done * self.discount * target_Q
+
+        #action_last_h_critic = action_last_h.clone().detach().requires_grad_(True)
+        current_Q1, current_Q2 = self.critic(state_last_h, action_last_h)
+        #current_Q1, current_Q2 = self.critic(state_last_h, action_last_h_critic)
+        critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
+
+        self.critic_optimizer.zero_grad()
+        #critic_loss.backward()
+        critic_loss.backward(retain_graph=True)
+        self.critic_optimizer.step()
+
+
+        # Pertubation Model / Action Training
+        sampled_actions = self.vae.decode(state_last_h)
+        perturbed_actions = self.actor(state_last_h, sampled_actions)
+
+        # Update through DPG
+        actor_loss = -self.critic.q1(state_last_h, perturbed_actions).mean()
+            
+        self.actor_optimizer.zero_grad()
+        #actor_loss.backward()
+        actor_loss.backward(retain_graph=True)
+        self.actor_optimizer.step()
+
+
+        # Update Target Networks 
+        for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+        for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        
+        return vae_loss, actor_loss, critic_loss
+    
+    def valid_forward(self, state, action, next_state, reward, not_done, batch_size=100):
+        with torch.no_grad():  # 确保在这个上下文中不计算梯度
+            # Variational Auto-Encoder Validation
+            state_embed, state_last_h = self.shared_encoder(state)
+            action_embed, action_last_h = self.shared_encoder(action)
+            next_state_embed, next_state_last_h = self.shared_encoder(next_state)
+            state_last_h = self.scale_to_range(torch.sum(state_last_h, dim=0))
+            action_last_h = self.scale_to_range(torch.sum(action_last_h, dim=0))
+            next_state_last_h = self.scale_to_range(torch.sum(next_state_last_h, dim=0))
+            recon, mean, std = self.vae(state_last_h, action_last_h)
+            recon_loss = F.mse_loss(recon, action_last_h)
+            KL_loss = -0.5 * (1 + torch.log(std.pow(2)) - mean.pow(2) - std.pow(2)).mean()
+            vae_loss = recon_loss + 0.5 * KL_loss
+
+            # Critic Validation
+            # Duplicate next state 10 times
+            next_state_last_h = torch.repeat_interleave(next_state_last_h, 10, 0)
+
+            # Compute value of perturbed actions sampled from the VAE
+            target_Q1, target_Q2 = self.critic_target(next_state_last_h, self.actor_target(next_state_last_h, self.vae.decode(next_state_last_h)))
+
+            # Soft Clipped Double Q-learning 
+            target_Q = self.lmbda * torch.min(target_Q1, target_Q2) + (1. - self.lmbda) * torch.max(target_Q1, target_Q2)
+            # Take max over each action sampled from the VAE
+            target_Q = target_Q.reshape(batch_size, -1).max(1)[0].reshape(-1, 1)
+
+            target_Q = reward + not_done * self.discount * target_Q
+
+            current_Q1, current_Q2 = self.critic(state_last_h, action_last_h)
+            critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
+
+            # Pertubation Model / Action Validation
+            sampled_actions = self.vae.decode(state_last_h)
+            perturbed_actions = self.actor(state_last_h, sampled_actions)
+
+            # Update through DPG
+            actor_loss = -self.critic.q1(state_last_h, perturbed_actions).mean()
+        
+        # 返回计算的损失，用于评估
+        return vae_loss.item(), actor_loss.item(), critic_loss.item()
 
 
