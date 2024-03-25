@@ -1050,19 +1050,24 @@ class BCQModel(object):
         if not cfg.save_log:
             return
         if not path:
-            path = cfg.model_path
+            path = cfg.bcq_model_path
         if critical:
             path += '.final'
         all_state = {'lstd': self.m.state_dict(),
                      'config': cfg.__dict__,
                      'epoch': epoch}
         torch.save(all_state, path)
-        logging.info('BCQ Model saved')
+        logging.info('BCQ Model saved {}'.format(path))
 
     def load_model(self, path=None):
         if not path:
             path = cfg.bcq_model_path
-        all_state = torch.load(path, map_location='cpu')
+        if cfg.cuda:
+            device = torch.device(f"cuda:{cfg.cuda_device[0]}") if len(cfg.cuda_device) == 1 else torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+        #all_state = torch.load(path, map_location='cpu')
+        all_state = torch.load(path, map_location=device)
         self.m.load_state_dict(all_state['lstd'])
         self.base_epoch = all_state.get('epoch', 0)
         logging.info('BCQ Model loaded')

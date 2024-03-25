@@ -2490,8 +2490,11 @@ class Actor(nn.Module):
         #encoded = self.encoder(state, action)
         a = F.relu(self.l1(torch.cat([state, action], 1)))
         a = F.relu(self.l2(a))
-        a = self.phi * self.max_action * torch.tanh(self.l3(a))
-        return (a + action).clamp(-self.max_action, self.max_action)
+        #a = self.phi * self.max_action * torch.tanh(self.l3(a))
+        # no clip
+        a = self.phi * torch.tanh(self.l3(a))
+        #return (a + action).clamp(-self.max_action, self.max_action)
+        return (a + action)
 
 
 class Critic(nn.Module):
@@ -2563,7 +2566,9 @@ class VAE(nn.Module):
     def decode(self, state, z=None):
         # When sampling from the VAE, the latent vector is clipped to [-0.5, 0.5]
         if z is None:
-            z = torch.randn((state.shape[0], self.latent_dim)).to(self.device).clamp(-0.5,0.5)
+            #z = torch.randn((state.shape[0], self.latent_dim)).to(self.device).clamp(-0.5,0.5)
+            # no clip
+            z = torch.randn((state.shape[0], self.latent_dim)).to(self.device)
 
         a = F.relu(self.d1(torch.cat([state, z], 1)))
         a = F.relu(self.d2(a))
@@ -2605,7 +2610,8 @@ class BCQ(nn.Module):
     def select_action(self, state):		
         with torch.no_grad():
             state_embed, state_last_h = self.shared_encoder(state)
-            state_last_h = self.scale_to_range(torch.sum(state_last_h, dim=0))
+            #state_last_h = self.scale_to_range(torch.sum(state_last_h, dim=0))
+            state_last_h = torch.sum(state_last_h, dim=0)
 
             state_repeated = state_last_h.repeat_interleave(100, dim=0)
             actions = self.actor(state_repeated, self.vae.decode(state_repeated))
@@ -2651,9 +2657,13 @@ class BCQ(nn.Module):
         state_embed, state_last_h = self.shared_encoder(state)
         action_embed, action_last_h = self.shared_encoder(action)
         next_state_embed, next_state_last_h = self.shared_encoder(next_state)
-        state_last_h = self.scale_to_range(torch.sum(state_last_h, dim=0))
-        action_last_h = self.scale_to_range(torch.sum(action_last_h, dim=0))
-        next_state_last_h = self.scale_to_range(torch.sum(next_state_last_h, dim=0))
+        # no clip
+        #state_last_h = self.scale_to_range(torch.sum(state_last_h, dim=0))
+        state_last_h = (torch.sum(state_last_h, dim=0))
+        #action_last_h = self.scale_to_range(torch.sum(action_last_h, dim=0))
+        action_last_h = (torch.sum(action_last_h, dim=0))
+        #next_state_last_h = self.scale_to_range(torch.sum(next_state_last_h, dim=0))
+        next_state_last_h = (torch.sum(next_state_last_h, dim=0))
         recon, mean, std = self.vae(state_last_h, action_last_h)
         recon_loss = F.mse_loss(recon, action_last_h)
         KL_loss	= -0.5 * (1 + torch.log(std.pow(2)) - mean.pow(2) - std.pow(2)).mean()
@@ -2719,9 +2729,12 @@ class BCQ(nn.Module):
             state_embed, state_last_h = self.shared_encoder(state)
             action_embed, action_last_h = self.shared_encoder(action)
             next_state_embed, next_state_last_h = self.shared_encoder(next_state)
-            state_last_h = self.scale_to_range(torch.sum(state_last_h, dim=0))
-            action_last_h = self.scale_to_range(torch.sum(action_last_h, dim=0))
-            next_state_last_h = self.scale_to_range(torch.sum(next_state_last_h, dim=0))
+            #state_last_h = self.scale_to_range(torch.sum(state_last_h, dim=0))
+            #action_last_h = self.scale_to_range(torch.sum(action_last_h, dim=0))
+            #next_state_last_h = self.scale_to_range(torch.sum(next_state_last_h, dim=0))
+            state_last_h = (torch.sum(state_last_h, dim=0))
+            action_last_h = (torch.sum(action_last_h, dim=0))
+            next_state_last_h = (torch.sum(next_state_last_h, dim=0))
             recon, mean, std = self.vae(state_last_h, action_last_h)
             recon_loss = F.mse_loss(recon, action_last_h)
             KL_loss = -0.5 * (1 + torch.log(std.pow(2)) - mean.pow(2) - std.pow(2)).mean()

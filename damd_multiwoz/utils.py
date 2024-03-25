@@ -287,10 +287,10 @@ class ReplayBuffer(object):
             show_helper(self.next_state, start, end)
         elif name == 'reward':
             print('********** reward *********')
-            print(self.reward)
+            print(self.reward[start:end])
         elif name == 'not_done':
             print('********** not done *********')
-            print(self.not_done)
+            print(self.not_done[start:end])
         print(f'len of buffer now: {self.crt_size}')
 
     '''
