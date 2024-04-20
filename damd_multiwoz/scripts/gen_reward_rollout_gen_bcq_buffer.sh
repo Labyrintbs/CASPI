@@ -36,6 +36,7 @@ enable_cntfact_reward=True
 enable_contrast_reward=True
 cntfact_penalty=-0.5
 generate_bcq=True
+sample_ratio=0
 #train_bcq=True
 #exp_path=experiments/20240314_all_debug_bcq_cntfact_bspn_reward_K_5_sd20240311_lr0.005_bs128_sp2_dc3_actTrue_0.05_hashbNElGUjJpMbDA
 #bcq_model_path=experiments/20240314_all_debug_bcq_cntfact_bspn_reward_K_5_sd20240311_lr0.005_bs128_sp2_dc3_actTrue_0.05_hashbNElGUjJpMbDA/bcq_model.pkl
@@ -54,7 +55,7 @@ log_path=${root_path}/logs/${log_file}
 echo 'To view log tail:'${log_path}
 
 python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
-	exp_no=debug_generate_bcq_train_K_5 batch_size=128 multi_acts_training=False \
+	exp_no=generate_bcq_train_K_5_sample_ratio_0 batch_size=128 multi_acts_training=False \
 	use_true_curr_bspn=${use_true_curr_bspn} \
 	enable_aspn=${enable_aspn} \
 	bspn_mode=${bspn_mode} \
@@ -75,7 +76,8 @@ python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
 	enable_contrast_reward=${enable_contrast_reward} \
 	cntfact_penalty=${cntfact_penalty} \
 	early_stop_count=${early_stop_count} \
-	generate_bcq=${generate_bcq}
+	generate_bcq=${generate_bcq}\
+	sample_ratio=${sample_ratio}\
 	#bcq_model_path=${bcq_model_path} \
 	#use_bcq=${use_bcq} \
 	#exp_path=${exp_path} \

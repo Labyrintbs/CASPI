@@ -26,23 +26,22 @@ enable_aspn=True
 bspn_mode=bspn
 enable_dst=False
 use_true_curr_bspn=True
-enable_cntfact=True
-enable_debug=True
+enable_cntfact=False
+enable_debug=False
 enable_contrast=False
 enable_tensorboard=True
-enable_multi_cntfact=True
-enable_rl=True
-enable_cntfact_reward=True
-enable_contrast_reward=True
+enable_multi_cntfact=False
+enable_rl=False
+enable_cntfact_reward=False
+enable_contrast_reward=False
 cntfact_penalty=-0.5
 use_bcq=True
 #train_bcq=True
 #exp_path=experiments/20240314_all_debug_bcq_cntfact_bspn_reward_K_5_sd20240311_lr0.005_bs128_sp2_dc3_actTrue_0.05_hashbNElGUjJpMbDA
 #bcq_model_path=experiments/20240314_all_debug_bcq_cntfact_bspn_reward_K_5_sd20240311_lr0.005_bs128_sp2_dc3_actTrue_0.05_hashbNElGUjJpMbDA/bcq_model.pkl
 #bcq_model_path=experiments/20240319_all_debug_generate_bcq_train_K_5_sd20240316_lr0.005_bs128_sp3_dc3_actTrue_0.05_hashbgBEdUlfPVqA/bcq_model.pkl
-#bcq_model_path=experiments/20240320_all_debug_bcq_train_K_5_sd20240316_lr0.005_bs128_sp3_dc3_actTrue_0.05_hashbgBEdUlfPVqA/bcq_model.pkl
-# sample ratio 0
-bcq_model_path=experiments/20240329_all_generate_bcq_train_K_5_sample_ratio_0_sd20240316_lr0.005_bs128_sp3_dc3_actTrue_0.05_hashbgBEdUlfPVqA/bcq_model.pkl
+# sample ratio 0.1
+bcq_model_path=experiments/20240320_all_debug_bcq_train_K_5_sd20240316_lr0.005_bs128_sp3_dc3_actTrue_0.05_hashbgBEdUlfPVqA/bcq_model.pkl
 early_stop_count=5
 
 
@@ -58,7 +57,7 @@ log_path=${root_path}/logs/${log_file}
 echo 'To view log tail:'${log_path}
 
 python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
-	exp_no=reinforce_bcq_input_train_K_5_sampleRaito_0 batch_size=64 multi_acts_training=False \
+	exp_no=supervised_bcq_input_train_K_5_sampleRaito_0.1 batch_size=64 multi_acts_training=False \
 	use_true_curr_bspn=${use_true_curr_bspn} \
 	enable_aspn=${enable_aspn} \
 	bspn_mode=${bspn_mode} \

@@ -35,20 +35,19 @@ enable_rl=True
 enable_cntfact_reward=True
 enable_contrast_reward=True
 cntfact_penalty=-0.5
-use_bcq=True
-#train_bcq=True
-#exp_path=experiments/20240314_all_debug_bcq_cntfact_bspn_reward_K_5_sd20240311_lr0.005_bs128_sp2_dc3_actTrue_0.05_hashbNElGUjJpMbDA
-#bcq_model_path=experiments/20240314_all_debug_bcq_cntfact_bspn_reward_K_5_sd20240311_lr0.005_bs128_sp2_dc3_actTrue_0.05_hashbNElGUjJpMbDA/bcq_model.pkl
-#bcq_model_path=experiments/20240319_all_debug_generate_bcq_train_K_5_sd20240316_lr0.005_bs128_sp3_dc3_actTrue_0.05_hashbgBEdUlfPVqA/bcq_model.pkl
-#bcq_model_path=experiments/20240320_all_debug_bcq_train_K_5_sd20240316_lr0.005_bs128_sp3_dc3_actTrue_0.05_hashbgBEdUlfPVqA/bcq_model.pkl
-# sample ratio 0
-bcq_model_path=experiments/20240329_all_generate_bcq_train_K_5_sample_ratio_0_sd20240316_lr0.005_bs128_sp3_dc3_actTrue_0.05_hashbgBEdUlfPVqA/bcq_model.pkl
-early_stop_count=5
-
+#use_bcq=True
+train_bcq=True
+#exp_path=experiments/20240320_all_debug_bcq_train_K_5_sd20240316_lr0.005_bs128_sp3_dc3_actTrue_0.05_hashbgBEdUlfPVqA
+exp_path=experiments/20240329_all_generate_bcq_train_K_5_sample_ratio_0_sd20240316_lr0.005_bs128_sp3_dc3_actTrue_0.05_hashbgBEdUlfPVqA/
+bcq_model_path=experiments/20240329_all_generate_bcq_train_K_5_sample_ratio_0_sd20240316_lr0.005_bs128_sp3_dc3_actTrue_0.05_hashbgBEdUlfPVqA//bcq_model.pkl # this is no scaled version
+#bcq_model_path=experiments/20240319_all_debug_generate_bcq_train_K_5_sd20240316_lr0.005_bs128_sp3_dc3_actTrue_0.05_hashbgBEdUlfPVqA/bcq_model.pkl # this ori one
+early_stop_count=3
+epoch_num=3
+report_interval=10
 
 root_path=./damd_multiwoz
 
-per_epoch_report_path=${root_path}/data/multi-woz-oppe/reward/20240322_bcq_report_${K}_${metric}_${fold}_ratio_${ratio}_dp.csv
+per_epoch_report_path=${root_path}/data/multi-woz-oppe/reward/debug20240316_bcq_report_${K}_${metric}_${fold}_ratio_${ratio}_dp.csv
 dev_list=${root_path}/data/multi-woz-processed/rewardListFile_${K}_${fold}.json
 
 exp_name=debug_bspn_cntfact_reward_K_${K}_fold_${fold}_metric_${metric}_seed_${seed}_CntfactRatio_${ratio}
@@ -58,7 +57,7 @@ log_path=${root_path}/logs/${log_file}
 echo 'To view log tail:'${log_path}
 
 python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
-	exp_no=reinforce_bcq_input_train_K_5_sampleRaito_0 batch_size=64 multi_acts_training=False \
+	exp_no=bcq_model_train_K_5_sampleRatio_0 batch_size=2048 multi_acts_training=False \
 	use_true_curr_bspn=${use_true_curr_bspn} \
 	enable_aspn=${enable_aspn} \
 	bspn_mode=${bspn_mode} \
@@ -79,8 +78,10 @@ python  ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=$cuda \
 	enable_contrast_reward=${enable_contrast_reward} \
 	cntfact_penalty=${cntfact_penalty} \
 	early_stop_count=${early_stop_count} \
+	exp_path=${exp_path} \
+	train_bcq=${train_bcq} \
 	bcq_model_path=${bcq_model_path} \
-	use_bcq=${use_bcq} \
-	#exp_path=${exp_path} \
-	#train_bcq=${train_bcq} \
+	epoch_num=${epoch_num}\
+	report_interval=${report_interval}\
+	#use_bcq=${use_bcq} \
 

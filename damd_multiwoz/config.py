@@ -132,6 +132,9 @@ class _Config:
         #self.train_bcq_iteration = 1e5
         self.bcq_model_path = 'experiments/all_multi_acts_sample3_sd777_lr0.005_bs80_sp5_dc3/bcq_model.pkl'
 
+        # generate and save result
+        self.save_test_result = False
+
 
     def __str__(self):
         s = ''

@@ -1663,6 +1663,9 @@ class DAMD(nn.Module):
 
         probs = {}
         #pdb.set_trace()
+        if cfg.use_bcq:
+            inputs['bcq_state'] = copy.deepcopy(inputs[cfg.bspn_mode])
+            inputs['bcq_action'] = self.bcq.generate_action(inputs['bcq_state'])
 
         if cfg.enable_dspn: # false
             dspn_enc, _ = self.span_encoder(inputs['pv_dspn'])

@@ -231,6 +231,8 @@ class MultiWozEvaluator(object):
 
     def bleu_metric(self, data, eval_dial_list=None, not_return_log=False):
         gen, truth = [],[]
+        if cfg.save_test_result:
+            pdb.set_trace()
         for row in data:
             if eval_dial_list and row['dial_id'] +'.json' not in eval_dial_list:
                 continue

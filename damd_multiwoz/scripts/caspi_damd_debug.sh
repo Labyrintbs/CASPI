@@ -44,10 +44,11 @@ exp_name=caspi_damd_train_e2e_K_${K}_gamma_${gamma}_${train_e2e}_policy_loss_${p
 
 log_file=${exp_name}.log
 log_path=${root_path}/logs/${log_file}
+enable_debug=True
 
 
 python ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=${cuda} \
-	exp_no=CASPI_ablation batch_size=128 multi_acts_training=False \
+	exp_no=no_aug batch_size=128 multi_acts_training=False \
 	bspn_mode=${bspn_mode} \
 	enable_dst=${enable_dst} \
 	use_true_curr_bspn=${use_true_curr_bspn} \
@@ -57,5 +58,6 @@ python ${root_path}/model.py -mode train -cfg seed=$seed cuda_device=${cuda} \
 	policy_loss=${policy_loss} \
 	enable_aspn=${enable_aspn} \
 	early_stop_count=${early_stop_count} \
-	data_file=${data_file} 
+	data_file=${data_file} \
+	enable_debug=${enable_debug}
 
